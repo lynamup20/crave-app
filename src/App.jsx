@@ -16,6 +16,37 @@ import {
 
 const DISH_PHOTO_CACHE = Object.create(null);
 
+const DYNAMIC_DISH_SEEN_KEY = "crave_dynamic_last_shown";
+
+function getLastShownDynamicCuisine() {
+  try {
+    return localStorage.getItem(DYNAMIC_DISH_SEEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function markDynamicCuisineShown(term) {
+  if (!term) return;
+  try {
+    localStorage.setItem(DYNAMIC_DISH_SEEN_KEY, term);
+  } catch {
+    /* ignore */
+  }
+}
+
+function shouldOfferDynamicDish(dish) {
+  if (!dish?.isDynamic || !dish.term) return false;
+  return dish.term !== getLastShownDynamicCuisine();
+}
+
+function isCacheableDishId(dishId) {
+  return (
+    typeof dishId === "number" ||
+    (typeof dishId === "string" && dishId.startsWith("dynamic-"))
+  );
+}
+
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
   GOOGLE_PLACES_API_KEY:
@@ -342,6 +373,13 @@ const DISH_PHOTO_QUERIES = {
   30: "tiramisu chocolate dessert",
 };
 
+function dishPhotoQueryFor(dish) {
+  if (!dish) return null;
+  if (dish.photoQuery) return dish.photoQuery;
+  if (typeof dish.id === "number") return DISH_PHOTO_QUERIES[dish.id] || null;
+  return null;
+}
+
 const dishCardPhotoInflight = Object.create(null);
 const dishCardPhotoListeners = new Set();
 const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
@@ -388,7 +426,7 @@ function hydrateDishPhotosFromStorage() {
 hydrateDishPhotosFromStorage();
 
 function resolveDishPhotoUrl(dishId) {
-  if (typeof dishId !== "number") return null;
+  if (!isCacheableDishId(dishId)) return null;
   if (typeof DISH_PHOTO_CACHE[dishId] === "string") return DISH_PHOTO_CACHE[dishId];
   const stored = readDishPhotoFromStorage(dishId);
   if (stored) {
@@ -418,7 +456,7 @@ async function getDishCardPhoto(query, dishId) {
     return null;
   }
 
-  if (typeof dishId === "number") {
+  if (isCacheableDishId(dishId)) {
     const cached = resolveDishPhotoUrl(dishId);
     if (cached) return cached;
     if (DISH_PHOTO_CACHE[dishId] === false) return null;
@@ -443,7 +481,7 @@ async function getDishCardPhoto(query, dishId) {
     const data = await res.json();
     const photoUrl = data.results?.[0]?.urls?.regular || null;
 
-    if (typeof dishId === "number") {
+    if (isCacheableDishId(dishId)) {
       if (photoUrl) {
         DISH_PHOTO_CACHE[dishId] = photoUrl;
         writeDishPhotoToStorage(dishId, photoUrl);
@@ -457,14 +495,14 @@ async function getDishCardPhoto(query, dishId) {
     return photoUrl;
   })();
 
-  if (typeof dishId === "number") {
+  if (isCacheableDishId(dishId)) {
     dishCardPhotoInflight[dishId] = fetchPromise;
   }
 
   try {
     return await fetchPromise;
   } catch (err) {
-    if (typeof dishId === "number") {
+    if (isCacheableDishId(dishId)) {
       DISH_PHOTO_CACHE[dishId] = false;
       delete dishCardPhotoInflight[dishId];
       notifyDishCardPhotoListeners();
@@ -474,7 +512,7 @@ async function getDishCardPhoto(query, dishId) {
 }
 
 function scheduleDishPhotoFetch(dishId, query, staggerIndex) {
-  if (typeof dishId !== "number" || !query) return;
+  if (!isCacheableDishId(dishId) || !query) return;
   if (resolveDishPhotoUrl(dishId)) return;
   if (DISH_PHOTO_CACHE[dishId] === false) return;
   if (dishCardPhotoInflight[dishId]) return;
@@ -492,7 +530,7 @@ function prefetchDishPhotosForIndices(orderedDishes, startIdx, endIdx) {
   let stagger = 0;
   for (let i = startIdx; i <= endIdx && i < orderedDishes.length; i++) {
     const dish = orderedDishes[i];
-    const query = DISH_PHOTO_QUERIES[dish.id];
+    const query = dishPhotoQueryFor(dish);
     if (!query) continue;
     scheduleDishPhotoFetch(dish.id, query, stagger);
     stagger += 1;
@@ -1122,13 +1160,13 @@ function DishCard({ dish, dim }) {
   useEffect(() => {
     if (photoUrl) return;
 
-    const query = DISH_PHOTO_QUERIES[dish.id];
+    const query = dishPhotoQueryFor(dish);
     if (!query || DISH_PHOTO_CACHE[dish.id] === false) return;
 
     getDishCardPhoto(query, dish.id).catch((err) => {
       console.warn(`Unsplash fetch failed (dish ${dish.id}):`, err.message);
     });
-  }, [dish.id, photoUrl]);
+  }, [dish.id, dish.photoQuery, photoUrl]);
 
   return (
     <div style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", background:`radial-gradient(ellipse at 35% 25%, ${dish.g2} 0%, ${dish.g1} 65%)` }}>
@@ -2091,8 +2129,7 @@ export default function App() {
     userIdRef.current = user.id;
     const profile = await ensureUserProfile(user);
     applyUserProfile(profile);
-    const dish = await computeDynamicDish(user.id);
-    setDynamicDish(dish);
+    setDynamicDish(null);
     setScreen(profile.onboarding_completed ? "main" : "onboarding");
   }, [applyUserProfile]);
 
@@ -2119,6 +2156,7 @@ export default function App() {
         setAuthUser(null);
         setUserProfile(null);
         userIdRef.current = null;
+        setDynamicDish(null);
         setScreen("auth");
       }
     });
@@ -2149,7 +2187,14 @@ export default function App() {
     const userId = userIdRef.current;
     if (!userId) return;
     const dish = await computeDynamicDish(userId);
+    if (!dish || !shouldOfferDynamicDish(dish)) return;
     setDynamicDish(dish);
+    const query = dish.photoQuery;
+    if (query && !resolveDishPhotoUrl(dish.id)) {
+      getDishCardPhoto(query, dish.id).catch((err) => {
+        console.warn(`Unsplash fetch failed (dynamic dish ${dish.id}):`, err.message);
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -2274,6 +2319,10 @@ export default function App() {
 
     if (layer === "categories") {
       const cat = orderedDishes[catIdx];
+      if (cat?.isDynamic) {
+        markDynamicCuisineShown(cat.term);
+        setDynamicDish(null);
+      }
       if (dir === "right") {
         setBanner("searching");
         setTimeout(() => setBanner(null), 1800);

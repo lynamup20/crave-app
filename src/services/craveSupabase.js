@@ -41,6 +41,39 @@ function cuisineSearchTerm(cuisine) {
   return (cuisine || "restaurant").toLowerCase().replace(/_/g, " ").trim();
 }
 
+function cuisinePhotoQuery(cuisine, term) {
+  const haystack = `${cuisine} ${term}`.toLowerCase();
+  const rules = [
+    ["ramen", "ramen bowl noodles soup"],
+    ["japanese", "sushi nigiri fish close up"],
+    ["sushi", "sushi nigiri fish close up"],
+    ["mexican", "tacos mexican street food"],
+    ["taco", "tacos mexican street food"],
+    ["burger", "smash burger beef patty juicy"],
+    ["american", "smash burger beef patty juicy"],
+    ["pizza", "pizza margherita melted cheese"],
+    ["italian", "spaghetti carbonara pasta"],
+    ["bbq", "bbq pork ribs smoked meat"],
+    ["thai", "pad thai noodles wok"],
+    ["indian", "butter chicken tikka masala"],
+    ["chinese", "xiaolongbao dim sum dumplings"],
+    ["korean", "korean bbq galbi grill"],
+    ["seafood", "fresh lobster seafood plate"],
+    ["steak", "ribeye steak medium rare seared"],
+    ["greek", "greek salad feta olives"],
+    ["vietnamese", "pho bo vietnamese soup"],
+    ["pho", "pho bo vietnamese soup"],
+    ["french", "croissant flaky butter pastry"],
+    ["mediterranean", "greek salad feta olives"],
+    ["breakfast", "eggs benedict hollandaise brunch"],
+    ["coffee", "latte coffee art cafe"],
+  ];
+  for (const [key, query] of rules) {
+    if (haystack.includes(key)) return query;
+  }
+  return `${term} restaurant food close up`;
+}
+
 export function recipeCacheKey(name, cuisine) {
   return `${name}|${cuisine}`.toLowerCase().trim();
 }
@@ -224,12 +257,14 @@ export async function computeDynamicDish(userId) {
   const [cuisine] = top;
   const emoji = cuisineEmoji(cuisine);
   const term = cuisineSearchTerm(cuisine);
+  const photoQuery = cuisinePhotoQuery(cuisine, term);
 
   return {
     id: `dynamic-${term.replace(/\s+/g, "-")}`,
     name: `Because You Love ${cuisine}`,
     emoji,
     term,
+    photoQuery,
     tags: ["Personalized", "For You"],
     isDynamic: true,
     image: "",
