@@ -206,10 +206,16 @@ function getCurrentPosition() {
 
 function placePhotoUrl(photoReference, maxWidth = 800) {
   if (!photoReference) return null;
-  return placesApiUrl(PLACES_API_BASES[0], "/place/photo", {
-    maxwidth: maxWidth,
-    photo_reference: photoReference,
-  });
+  return buildGooglePlacePhotoUrl(photoReference, maxWidth);
+}
+
+function buildGooglePlacePhotoUrl(photoReference, maxWidth = 800) {
+  if (!photoReference) return null;
+  const url = new URL("https://maps.googleapis.com/maps/api/place/photo");
+  url.searchParams.set("maxwidth", String(maxWidth));
+  url.searchParams.set("photo_reference", photoReference);
+  url.searchParams.set("key", CONFIG.GOOGLE_PLACES_API_KEY);
+  return url.toString();
 }
 
 function cuisineFromTypes(types = []) {
@@ -283,54 +289,67 @@ async function searchGooglePlacesNearby(lat, lng, term, tasteTags = []) {
     .map((place) => mapGooglePlace(place, lat, lng));
 }
 
-const DISH_IMAGE_CACHE_KEY = "crave-dish-images";
-const DISH_IMAGE_SESSION_KEY = "crave-dish-images-prefetched";
+// Module-level session cache: dish id → photo URL (false = fetch attempted, no photo)
+const dishPhotoCache = Object.create(null);
+const dishPhotoInflight = new Set();
+const dishPhotoListeners = new Set();
 
-function loadDishImageCache() {
-  try {
-    const raw = localStorage.getItem(DISH_IMAGE_CACHE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
+function notifyDishPhotoListeners() {
+  dishPhotoListeners.forEach((fn) => fn());
 }
 
-function saveDishImageCache(map) {
-  try {
-    localStorage.setItem(DISH_IMAGE_CACHE_KEY, JSON.stringify(map));
-  } catch {
-    /* ignore quota errors */
-  }
+function subscribeDishPhotos(listener) {
+  dishPhotoListeners.add(listener);
+  return () => dishPhotoListeners.delete(listener);
 }
 
-function dishPrefetchDoneThisSession() {
-  try {
-    return sessionStorage.getItem(DISH_IMAGE_SESSION_KEY) === "1";
-  } catch {
-    return false;
-  }
+function getCachedDishPhoto(dishId) {
+  const cached = dishPhotoCache[dishId];
+  return typeof cached === "string" ? cached : "";
 }
 
-function markDishPrefetchSession() {
-  try {
-    sessionStorage.setItem(DISH_IMAGE_SESSION_KEY, "1");
-  } catch {
-    /* ignore */
-  }
-}
-
-async function fetchDishHeroPhoto(dishName, lat, lng) {
-  const params = { query: dishName.toLowerCase() };
-  if (lat != null && lng != null) {
-    params.location = `${lat},${lng}`;
-    params.radius = CONFIG.SEARCH_RADIUS;
-  }
-  const data = await fetchPlacesApi("/place/textsearch/json", params);
+async function fetchDishPhotoFromPlaces(dishName) {
+  const data = await fetchPlacesApi("/place/textsearch/json", {
+    query: dishName.toLowerCase(),
+  });
   const photoRef = data.results?.[0]?.photos?.[0]?.photo_reference;
-  return photoRef ? placePhotoUrl(photoRef, 800) : null;
+  return photoRef ? buildGooglePlacePhotoUrl(photoRef, 800) : null;
+}
+
+async function ensureDishPhoto(dish) {
+  if (!dish) return "";
+  if (dishPhotoCache[dish.id] !== undefined) {
+    return getCachedDishPhoto(dish.id);
+  }
+  if (dishPhotoInflight.has(dish.id)) return "";
+  if (!CONFIG.GOOGLE_PLACES_API_KEY) {
+    dishPhotoCache[dish.id] = false;
+    return "";
+  }
+
+  dishPhotoInflight.add(dish.id);
+  try {
+    const url = await fetchDishPhotoFromPlaces(dish.name);
+    dishPhotoCache[dish.id] = url || false;
+  } catch (err) {
+    console.warn(`Dish photo fetch failed (${dish.name}):`, err.message);
+    dishPhotoCache[dish.id] = false;
+  } finally {
+    dishPhotoInflight.delete(dish.id);
+    notifyDishPhotoListeners();
+  }
+  return getCachedDishPhoto(dish.id);
 }
 
 const dishPhotoDelay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function prefetchAllDishPhotos(dishes) {
+  for (const dish of dishes) {
+    if (dishPhotoCache[dish.id] !== undefined) continue;
+    await ensureDishPhoto(dish);
+    await dishPhotoDelay(200);
+  }
+}
 
 function parseRating(restaurant) {
   const n = parseFloat(restaurant.rating);
@@ -690,7 +709,17 @@ const CSS = `
 function DishCard({ dish, dim }) {
   const [loaded, setLoaded] = useState(false);
   const [imgErr, setImgErr] = useState(false);
-  const showImg = dish.image && !imgErr;
+  const showImg = Boolean(dish.image) && !imgErr;
+
+  useEffect(() => {
+    setLoaded(false);
+    setImgErr(false);
+  }, [dish.image]);
+
+  useEffect(() => {
+    if (dish.image || dishPhotoCache[dish.id] !== undefined) return;
+    ensureDishPhoto(dish);
+  }, [dish]);
 
   return (
     <div style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", background:`radial-gradient(ellipse at 35% 25%, ${dish.g2} 0%, ${dish.g1} 65%)` }}>
@@ -698,7 +727,7 @@ function DishCard({ dish, dim }) {
         <img
           src={dish.image} alt={dish.name} draggable={false}
           onLoad={() => setLoaded(true)} onError={() => setImgErr(true)}
-          style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity: loaded ? 1 : 0, transition:"opacity 0.4s", pointerEvents:"none" }}
+          style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity: loaded ? 1 : 0, transition:"opacity 0.4s", pointerEvents:"none", zIndex:1 }}
         />
       )}
       {(!showImg || !loaded) && (
@@ -1584,7 +1613,7 @@ export default function App() {
   const [showWall,     setShowWall]     = useState(false);
   const [wallMode,     setWallMode]     = useState("limit");
   const [shareToast,   setShareToast]   = useState(false);
-  const [dishImages,   setDishImages]   = useState(() => loadDishImageCache());
+  const [, setDishPhotoTick] = useState(0);
 
   const dsRef    = useRef({ x:0, y:0 });
   const dishPrefetchRef = useRef(false);
@@ -1607,65 +1636,21 @@ export default function App() {
   }, []);
 
   const dishWithImage = useCallback(
-    (dish) => (dish ? { ...dish, image: dishImages[dish.id] || dish.image } : dish),
-    [dishImages],
+    (dish) => {
+      if (!dish) return dish;
+      const cached = getCachedDishPhoto(dish.id);
+      return { ...dish, image: cached || dish.image || "" };
+    },
+    [dishPhotoTick],
   );
 
+  useEffect(() => subscribeDishPhotos(() => setDishPhotoTick((n) => n + 1)), []);
+
   useEffect(() => {
-    if (dishPrefetchRef.current || dishPrefetchDoneThisSession()) return;
-    if (!CONFIG.GOOGLE_PLACES_API_KEY) return;
+    if (dishPrefetchRef.current) return;
     dishPrefetchRef.current = true;
-
-    let cancelled = false;
-
-    (async () => {
-      const cached = loadDishImageCache();
-      const missing = DISHES.filter((d) => !cached[d.id]);
-      if (missing.length === 0) {
-        markDishPrefetchSession();
-        return;
-      }
-      markDishPrefetchSession();
-
-      let lat = userLoc?.lat;
-      let lng = userLoc?.lng;
-      if (lat == null || lng == null) {
-        try {
-          const loc = await getCurrentPosition();
-          lat = loc.lat;
-          lng = loc.lng;
-          if (!cancelled) setUserLoc(loc);
-        } catch {
-          /* search without location bias */
-        }
-      }
-
-      const next = { ...cached };
-
-      for (const dish of missing) {
-        if (cancelled) break;
-        try {
-          const url = await fetchDishHeroPhoto(dish.name, lat, lng);
-          if (url) {
-            next[dish.id] = url;
-            if (!cancelled) {
-              setDishImages((prev) => ({ ...prev, [dish.id]: url }));
-            }
-          }
-        } catch (err) {
-          console.warn(`Dish photo fetch failed (${dish.name}):`, err.message);
-        }
-        await dishPhotoDelay(250);
-      }
-
-      saveDishImageCache(next);
-      markDishPrefetchSession();
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [userLoc]);
+    prefetchAllDishPhotos(DISHES);
+  }, []);
 
   const restaurants = useMemo(
     () => applyRestaurantFilter(restaurantsRaw, restaurantFilter),
