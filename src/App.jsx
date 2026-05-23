@@ -75,6 +75,87 @@ const TASTE_TAGS = [
   "Comfort 🍲","Premium ✨","Quick 🏃","Vegan 🌱","Seafood 🦞","Noodles 🍜",
 ];
 
+// Taste tag → dish category IDs + Google Places search modifiers
+const flavorToCategories = {
+  "Spicy 🌶️": {
+    dishIds: [1, 7, 18, 26, 13, 27],
+    placesKeyword: "spicy",
+  },
+  "Savory 🥩": {
+    dishIds: [2, 3, 5, 6, 11, 15, 19, 25, 28],
+    placesKeyword: "savory",
+  },
+  "Sweet 🍯": {
+    dishIds: [12, 21, 24, 17, 30, 22],
+    placesKeyword: "sweet dessert",
+  },
+  "Fresh 🥗": {
+    dishIds: [4, 8, 16, 23, 29, 9],
+    placesKeyword: "fresh healthy",
+  },
+  "Comfort 🍲": {
+    dishIds: [1, 3, 5, 7, 14, 20, 6, 17, 22],
+    placesKeyword: "comfort food",
+  },
+  "Premium ✨": {
+    dishIds: [4, 28, 6, 15],
+    rankby: "prominence",
+  },
+  "Quick 🏃": {
+    dishIds: [2, 3, 27, 29, 24, 21],
+    placesKeyword: "quick",
+  },
+  "Vegan 🌱": {
+    dishIds: [16, 9, 23, 14],
+    placesKeyword: "vegan vegetarian",
+  },
+  "Seafood 🦞": {
+    dishIds: [8, 4],
+    placesKeyword: "seafood",
+  },
+  "Noodles 🍜": {
+    dishIds: [1, 9, 14, 20],
+    placesKeyword: "noodles",
+  },
+};
+
+function flavorBaseLabel(tag) {
+  return tag.split(/\s+/)[0];
+}
+
+function orderDishesByFlavorProfile(dishes, tasteTags) {
+  if (!tasteTags?.length) return dishes;
+  const scoreDish = (dish) => {
+    let score = 0;
+    for (const tag of tasteTags) {
+      const flavor = flavorToCategories[tag];
+      if (flavor?.dishIds?.includes(dish.id)) score += 3;
+      const base = flavorBaseLabel(tag);
+      if (dish.tags.some((t) => t.toLowerCase() === base.toLowerCase())) score += 2;
+      if (base === "Spicy" && dish.tags.some((t) => /spicy|spiced|hot/i.test(t))) score += 1;
+      if (base === "Fresh" && dish.tags.some((t) => /fresh|light/i.test(t))) score += 1;
+      if (base === "Quick" && dish.tags.some((t) => /quick|street/i.test(t))) score += 1;
+    }
+    return score;
+  };
+  return [...dishes].sort((a, b) => scoreDish(b) - scoreDish(a) || a.id - b.id);
+}
+
+function buildFlavorPlacesParams(tasteTags) {
+  const keywordParts = [];
+  let rankby = null;
+  for (const tag of tasteTags || []) {
+    const flavor = flavorToCategories[tag];
+    if (!flavor) continue;
+    if (flavor.placesKeyword) keywordParts.push(flavor.placesKeyword);
+    if (flavor.rankby) rankby = flavor.rankby;
+  }
+  return {
+    keywordSuffix: [...new Set(keywordParts.join(" ").split(/\s+/).filter(Boolean))].join(" "),
+    rankby,
+  };
+}
+
 // ─── GOOGLE PLACES ────────────────────────────────────────────────────────────
 function placesApiUrl(base, path, params) {
   const origin = base.startsWith("http") ? undefined : window.location.origin;
@@ -186,13 +267,17 @@ function mapGooglePlace(place, userLat, userLng) {
   };
 }
 
-async function searchGooglePlacesNearby(lat, lng, term) {
-  const data = await fetchPlacesApi("/place/nearbysearch/json", {
+async function searchGooglePlacesNearby(lat, lng, term, tasteTags = []) {
+  const { keywordSuffix, rankby } = buildFlavorPlacesParams(tasteTags);
+  const keyword = [term, keywordSuffix].filter(Boolean).join(" ").trim();
+  const params = {
     location: `${lat},${lng}`,
     radius: CONFIG.SEARCH_RADIUS,
-    keyword: term,
+    keyword,
     type: "restaurant",
-  });
+  };
+  if (rankby) params.rankby = rankby;
+  const data = await fetchPlacesApi("/place/nearbysearch/json", params);
   return (data.results || [])
     .slice(0, CONFIG.RESULTS_LIMIT)
     .map((place) => mapGooglePlace(place, lat, lng));
@@ -284,13 +369,13 @@ function applyRestaurantFilter(list, filter) {
 }
 
 // ─── API CALLS ────────────────────────────────────────────────────────────────
-async function searchRestaurants(lat, lng, term) {
+async function searchRestaurants(lat, lng, term, tasteTags = []) {
   if (!CONFIG.GOOGLE_PLACES_API_KEY) {
     console.warn("Missing Google Places API key, using mock data");
     return sortRestaurantsByRankScore(await getMockList(term));
   }
   try {
-    const results = await searchGooglePlacesNearby(lat, lng, term);
+    const results = await searchGooglePlacesNearby(lat, lng, term, tasteTags);
     return sortRestaurantsByRankScore(results);
   } catch (err) {
     console.warn("Google Places Nearby Search failed, using mock data:", err);
@@ -1587,11 +1672,16 @@ export default function App() {
     [restaurantsRaw, restaurantFilter],
   );
 
+  const orderedDishes = useMemo(
+    () => orderDishesByFlavorProfile(DISHES, tasteTags),
+    [tasteTags],
+  );
+
   const totalAllowed = FREE_DAILY_SWIPES + bonusSwipes;
   const swipesLeft   = Math.max(0, totalAllowed - swipesUsed);
   const swipesLow    = swipesLeft <= 3 && swipesLeft > 0 && !isPremium;
-  const currentCard  = layer === "categories" ? DISHES[catIdx] : restaurants[restIdx];
-  const isDone       = layer === "categories" ? catIdx >= DISHES.length : restIdx >= restaurants.length;
+  const currentCard  = layer === "categories" ? orderedDishes[catIdx] : restaurants[restIdx];
+  const isDone       = layer === "categories" ? catIdx >= orderedDishes.length : restIdx >= restaurants.length;
   const likeAlpha    = Math.min(1, Math.max(0,  dx / 85));
   const nopeAlpha    = Math.min(1, Math.max(0, -dx / 85));
 
@@ -1622,14 +1712,14 @@ export default function App() {
           return;
         }
       }
-      const results = await searchRestaurants(lat, lng, cat.term);
+      const results = await searchRestaurants(lat, lng, cat.term, tasteTags);
       setRestaurantsRaw(results);
     } catch {
       setFetchErr(true);
     } finally {
       setFetching(false);
     }
-  }, [userLoc]);
+  }, [userLoc, tasteTags]);
 
   const goBackToCategories = useCallback(() => {
     if (exiting || layer !== "restaurants") return;
@@ -1655,7 +1745,7 @@ export default function App() {
     if (!isPremium) setSwipesUsed(p => p + 1);
 
     if (layer === "categories") {
-      const cat = DISHES[catIdx];
+      const cat = orderedDishes[catIdx];
       if (dir === "right") {
         setBanner("searching");
         setTimeout(() => setBanner(null), 1800);
@@ -1691,7 +1781,7 @@ export default function App() {
       }
       setDx(0); setDy(0); setExiting(false);
     }, 420);
-  }, [exiting, isPremium, swipesUsed, totalAllowed, layer, catIdx, restIdx, restaurants, activeCat, loadRestaurants]);
+  }, [exiting, isPremium, swipesUsed, totalAllowed, layer, catIdx, restIdx, restaurants, activeCat, loadRestaurants, orderedDishes]);
 
   const onDown = (e) => {
     if (exiting) return;
@@ -1805,7 +1895,9 @@ export default function App() {
             <div style={{ color:"rgba(255,255,255,0.3)", fontSize:11, marginTop:1, fontWeight:600 }}>
               {tab === "discover"
                 ? layer === "categories"
-                  ? isPremium ? "♾️ Swipe to discover" : `${swipesLeft} swipes left today`
+                  ? tasteTags.length > 0
+                    ? "✨ Curated for your taste"
+                    : isPremium ? "♾️ Swipe to discover" : `${swipesLeft} swipes left today`
                   : activeCat ? `${activeCat.emoji} ${activeCat.name} near ${userLoc ? "you" : "DC"}` : "Restaurants near you"
                 : tab === "liked"
                 ? `${liked.length} saved spots`
@@ -1889,7 +1981,7 @@ export default function App() {
               {/* Ghost stack */}
               {!isDone && !fetching && [2, 1].map(o => {
                 if (layer === "categories") {
-                  const bg = dishWithImage(DISHES[catIdx + o]);
+                  const bg = dishWithImage(orderedDishes[catIdx + o]);
                   if (!bg) return null;
                   return (
                     <div key={bg.id} style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", transform:`scale(${1 - o * 0.035}) translateY(${o * 13}px)`, zIndex: 10 - o }}>
