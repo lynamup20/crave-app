@@ -1,13 +1,19 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
   GOOGLE_PLACES_API_KEY:
     import.meta.env.VITE_GOOGLE_PLACES_API_KEY ||
     "AIzaSyDrJ-X7_ouEhdgm28iqWZaAFHqQIRw6cUQ",
-  SEARCH_RADIUS: 16093, // 10 miles in meters
+  SEARCH_RADIUS: 8047, // 5 miles in meters
   RESULTS_LIMIT: 20,
 };
+
+const RESTAURANT_FILTERS = [
+  { id: "rating", label: "Top Rated" },
+  { id: "closest", label: "Closest First" },
+  { id: "open", label: "Open Now" },
+];
 
 // Same-origin proxy (/maps/api) avoids browser CORS blocks; direct URL as fallback.
 const PLACES_API_BASES = [
@@ -241,17 +247,54 @@ async function fetchDishHeroPhoto(dishName, lat, lng) {
 
 const dishPhotoDelay = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function parseRating(restaurant) {
+  const n = parseFloat(restaurant.rating);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseDistanceMiles(restaurant) {
+  const n = parseFloat(restaurant.distanceMiles);
+  return Number.isFinite(n) ? n : 10;
+}
+
+function restaurantRankScore(restaurant) {
+  const ratingPart = (parseRating(restaurant) / 5) * 0.6;
+  const distancePart = Math.max(0, 1 - parseDistanceMiles(restaurant) / 10) * 0.4;
+  return ratingPart + distancePart;
+}
+
+function sortRestaurantsByRankScore(list) {
+  return [...list].sort((a, b) => restaurantRankScore(b) - restaurantRankScore(a));
+}
+
+function applyRestaurantFilter(list, filter) {
+  let out = [...list];
+  if (filter === "open") {
+    out = out.filter((r) => r.isOpenNow);
+  }
+  switch (filter) {
+    case "rating":
+      return out.sort((a, b) => parseRating(b) - parseRating(a));
+    case "closest":
+      return out.sort((a, b) => parseDistanceMiles(a) - parseDistanceMiles(b));
+    case "smart":
+    default:
+      return sortRestaurantsByRankScore(out);
+  }
+}
+
 // ─── API CALLS ────────────────────────────────────────────────────────────────
 async function searchRestaurants(lat, lng, term) {
   if (!CONFIG.GOOGLE_PLACES_API_KEY) {
     console.warn("Missing Google Places API key, using mock data");
-    return getMockList(term);
+    return sortRestaurantsByRankScore(await getMockList(term));
   }
   try {
-    return await searchGooglePlacesNearby(lat, lng, term);
+    const results = await searchGooglePlacesNearby(lat, lng, term);
+    return sortRestaurantsByRankScore(results);
   } catch (err) {
     console.warn("Google Places Nearby Search failed, using mock data:", err);
-    return getMockList(term);
+    return sortRestaurantsByRankScore(await getMockList(term));
   }
 }
 
@@ -419,6 +462,34 @@ const CSS = `
   }
   .change-craving-pill:active {
     transform: translateX(-50%) scale(0.97);
+  }
+  .rest-filter-strip {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .rest-filter-strip::-webkit-scrollbar { display: none; }
+  .rest-filter-pill {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
+  }
+  .rest-filter-pill.active {
+    background: rgba(232, 0, 10, 0.25);
+    border-color: rgba(232, 0, 10, 0.55);
+    color: #fff;
   }
   .chip {
     background: rgba(255,255,255,0.1);
@@ -1407,7 +1478,8 @@ export default function App() {
   const [userLoc,      setUserLoc]      = useState(null);
   const [layer,        setLayer]        = useState("categories");
   const [catIdx,       setCatIdx]       = useState(0);
-  const [restaurants,  setRestaurants]  = useState([]);
+  const [restaurantsRaw,    setRestaurantsRaw]    = useState([]);
+  const [restaurantFilter,  setRestaurantFilter]  = useState("smart");
   const [restIdx,      setRestIdx]      = useState(0);
   const [activeCat,    setActiveCat]    = useState(null);
   const [fetching,     setFetching]     = useState(false);
@@ -1510,6 +1582,11 @@ export default function App() {
     };
   }, [userLoc]);
 
+  const restaurants = useMemo(
+    () => applyRestaurantFilter(restaurantsRaw, restaurantFilter),
+    [restaurantsRaw, restaurantFilter],
+  );
+
   const totalAllowed = FREE_DAILY_SWIPES + bonusSwipes;
   const swipesLeft   = Math.max(0, totalAllowed - swipesUsed);
   const swipesLow    = swipesLeft <= 3 && swipesLeft > 0 && !isPremium;
@@ -1523,7 +1600,11 @@ export default function App() {
 
   const loadRestaurants = useCallback(async (cat) => {
     setFetching(true); setFetchErr(false);
-    setActiveCat(cat); setLayer("restaurants"); setRestIdx(0); setRestaurants([]);
+    setActiveCat(cat);
+    setLayer("restaurants");
+    setRestIdx(0);
+    setRestaurantsRaw([]);
+    setRestaurantFilter("smart");
     try {
       let lat;
       let lng;
@@ -1542,7 +1623,7 @@ export default function App() {
         }
       }
       const results = await searchRestaurants(lat, lng, cat.term);
-      setRestaurants(results);
+      setRestaurantsRaw(results);
     } catch {
       setFetchErr(true);
     } finally {
@@ -1772,6 +1853,24 @@ export default function App() {
               <div style={{ background:"rgba(232,0,10,0.12)", border:"1px solid rgba(232,0,10,0.25)", borderRadius:12, padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, flexShrink:0 }}>
                 <span style={{ color:"rgba(255,255,255,0.7)", fontSize:12, fontWeight:700 }}>⚠️ {swipesLeft} swipe{swipesLeft !== 1 ? "s" : ""} left</span>
                 <button onClick={() => { setWallMode("share"); setShowWall(true); }} style={{ background:"none", border:"none", color:"#E8000A", fontSize:12, fontWeight:800, cursor:"pointer" }}>Get More →</button>
+              </div>
+            )}
+
+            {layer === "restaurants" && !fetching && !fetchErr && restaurantsRaw.length > 0 && (
+              <div className="rest-filter-strip">
+                {RESTAURANT_FILTERS.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`rest-filter-pill${restaurantFilter === f.id ? " active" : ""}`}
+                    onClick={() => {
+                      setRestaurantFilter((prev) => (prev === f.id ? "smart" : f.id));
+                      setRestIdx(0);
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
               </div>
             )}
 
