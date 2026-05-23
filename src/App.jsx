@@ -192,6 +192,55 @@ async function searchGooglePlacesNearby(lat, lng, term) {
     .map((place) => mapGooglePlace(place, lat, lng));
 }
 
+const DISH_IMAGE_CACHE_KEY = "crave-dish-images";
+const DISH_IMAGE_SESSION_KEY = "crave-dish-images-prefetched";
+
+function loadDishImageCache() {
+  try {
+    const raw = localStorage.getItem(DISH_IMAGE_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveDishImageCache(map) {
+  try {
+    localStorage.setItem(DISH_IMAGE_CACHE_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+function dishPrefetchDoneThisSession() {
+  try {
+    return sessionStorage.getItem(DISH_IMAGE_SESSION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markDishPrefetchSession() {
+  try {
+    sessionStorage.setItem(DISH_IMAGE_SESSION_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+async function fetchDishHeroPhoto(dishName, lat, lng) {
+  const params = { query: dishName.toLowerCase() };
+  if (lat != null && lng != null) {
+    params.location = `${lat},${lng}`;
+    params.radius = CONFIG.SEARCH_RADIUS;
+  }
+  const data = await fetchPlacesApi("/place/textsearch/json", params);
+  const photoRef = data.results?.[0]?.photos?.[0]?.photo_reference;
+  return photoRef ? placePhotoUrl(photoRef, 800) : null;
+}
+
+const dishPhotoDelay = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // ─── API CALLS ────────────────────────────────────────────────────────────────
 async function searchRestaurants(lat, lng, term) {
   if (!CONFIG.GOOGLE_PLACES_API_KEY) {
@@ -1378,8 +1427,10 @@ export default function App() {
   const [showWall,     setShowWall]     = useState(false);
   const [wallMode,     setWallMode]     = useState("limit");
   const [shareToast,   setShareToast]   = useState(false);
+  const [dishImages,   setDishImages]   = useState(() => loadDishImageCache());
 
   const dsRef    = useRef({ x:0, y:0 });
+  const dishPrefetchRef = useRef(false);
   const velRef   = useRef(0);
   const lxRef    = useRef(0);
   const dyRawRef = useRef(0);
@@ -1397,6 +1448,67 @@ export default function App() {
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
     );
   }, []);
+
+  const dishWithImage = useCallback(
+    (dish) => (dish ? { ...dish, image: dishImages[dish.id] || dish.image } : dish),
+    [dishImages],
+  );
+
+  useEffect(() => {
+    if (dishPrefetchRef.current || dishPrefetchDoneThisSession()) return;
+    if (!CONFIG.GOOGLE_PLACES_API_KEY) return;
+    dishPrefetchRef.current = true;
+
+    let cancelled = false;
+
+    (async () => {
+      const cached = loadDishImageCache();
+      const missing = DISHES.filter((d) => !cached[d.id]);
+      if (missing.length === 0) {
+        markDishPrefetchSession();
+        return;
+      }
+      markDishPrefetchSession();
+
+      let lat = userLoc?.lat;
+      let lng = userLoc?.lng;
+      if (lat == null || lng == null) {
+        try {
+          const loc = await getCurrentPosition();
+          lat = loc.lat;
+          lng = loc.lng;
+          if (!cancelled) setUserLoc(loc);
+        } catch {
+          /* search without location bias */
+        }
+      }
+
+      const next = { ...cached };
+
+      for (const dish of missing) {
+        if (cancelled) break;
+        try {
+          const url = await fetchDishHeroPhoto(dish.name, lat, lng);
+          if (url) {
+            next[dish.id] = url;
+            if (!cancelled) {
+              setDishImages((prev) => ({ ...prev, [dish.id]: url }));
+            }
+          }
+        } catch (err) {
+          console.warn(`Dish photo fetch failed (${dish.name}):`, err.message);
+        }
+        await dishPhotoDelay(250);
+      }
+
+      saveDishImageCache(next);
+      markDishPrefetchSession();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userLoc]);
 
   const totalAllowed = FREE_DAILY_SWIPES + bonusSwipes;
   const swipesLeft   = Math.max(0, totalAllowed - swipesUsed);
@@ -1678,7 +1790,7 @@ export default function App() {
               {/* Ghost stack */}
               {!isDone && !fetching && [2, 1].map(o => {
                 if (layer === "categories") {
-                  const bg = DISHES[catIdx + o];
+                  const bg = dishWithImage(DISHES[catIdx + o]);
                   if (!bg) return null;
                   return (
                     <div key={bg.id} style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", transform:`scale(${1 - o * 0.035}) translateY(${o * 13}px)`, zIndex: 10 - o }}>
@@ -1724,7 +1836,7 @@ export default function App() {
                   onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}
                 >
                   {layer === "categories"
-                    ? <DishCard dish={currentCard} />
+                    ? <DishCard dish={dishWithImage(currentCard)} />
                     : <RestCard restaurant={currentCard} category={activeCat} />
                   }
 
