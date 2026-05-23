@@ -340,7 +340,7 @@ const DISH_PHOTO_QUERIES = {
   30: "tiramisu chocolate dessert",
 };
 
-const dishCardPhotoCache = Object.create(null);
+const dishPhotoCache = Object.create(null);
 const dishCardPhotoInflight = Object.create(null);
 const dishCardPhotoListeners = new Set();
 const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
@@ -369,11 +369,22 @@ function hydrateDishPhotosFromStorage() {
   for (const id of Object.keys(DISH_PHOTO_QUERIES)) {
     const dishId = Number(id);
     const stored = readDishPhotoFromStorage(dishId);
-    if (stored) dishCardPhotoCache[dishId] = stored;
+    if (stored) dishPhotoCache[dishId] = stored;
   }
 }
 
 hydrateDishPhotosFromStorage();
+
+function resolveDishPhotoUrl(dishId) {
+  if (typeof dishId !== "number") return null;
+  if (typeof dishPhotoCache[dishId] === "string") return dishPhotoCache[dishId];
+  const stored = readDishPhotoFromStorage(dishId);
+  if (stored) {
+    dishPhotoCache[dishId] = stored;
+    return stored;
+  }
+  return null;
+}
 
 function notifyDishCardPhotoListeners() {
   dishCardPhotoListeners.forEach((fn) => fn());
@@ -385,16 +396,7 @@ function subscribeDishCardPhotos(listener) {
 }
 
 function getCachedDishCardPhoto(dishId) {
-  if (typeof dishId !== "number") return "";
-  const cached = dishCardPhotoCache[dishId];
-  if (typeof cached === "string") return cached;
-
-  const stored = readDishPhotoFromStorage(dishId);
-  if (stored) {
-    dishCardPhotoCache[dishId] = stored;
-    return stored;
-  }
-  return "";
+  return resolveDishPhotoUrl(dishId) || "";
 }
 
 async function getDishCardPhoto(query, dishId) {
@@ -405,13 +407,9 @@ async function getDishCardPhoto(query, dishId) {
   }
 
   if (typeof dishId === "number") {
-    const stored = readDishPhotoFromStorage(dishId);
-    if (stored) {
-      dishCardPhotoCache[dishId] = stored;
-      return stored;
-    }
-    if (typeof dishCardPhotoCache[dishId] === "string") return dishCardPhotoCache[dishId];
-    if (dishCardPhotoCache[dishId] === false) return null;
+    const cached = resolveDishPhotoUrl(dishId);
+    if (cached) return cached;
+    if (dishPhotoCache[dishId] === false) return null;
     if (dishCardPhotoInflight[dishId]) return dishCardPhotoInflight[dishId];
   }
 
@@ -435,10 +433,10 @@ async function getDishCardPhoto(query, dishId) {
 
     if (typeof dishId === "number") {
       if (photoUrl) {
+        dishPhotoCache[dishId] = photoUrl;
         writeDishPhotoToStorage(dishId, photoUrl);
-        dishCardPhotoCache[dishId] = photoUrl;
       } else {
-        dishCardPhotoCache[dishId] = false;
+        dishPhotoCache[dishId] = false;
       }
       delete dishCardPhotoInflight[dishId];
       notifyDishCardPhotoListeners();
@@ -455,7 +453,7 @@ async function getDishCardPhoto(query, dishId) {
     return await fetchPromise;
   } catch (err) {
     if (typeof dishId === "number") {
-      dishCardPhotoCache[dishId] = false;
+      dishPhotoCache[dishId] = false;
       delete dishCardPhotoInflight[dishId];
       notifyDishCardPhotoListeners();
     }
@@ -465,8 +463,8 @@ async function getDishCardPhoto(query, dishId) {
 
 function scheduleDishPhotoFetch(dishId, query, staggerIndex) {
   if (typeof dishId !== "number" || !query) return;
-  if (getCachedDishCardPhoto(dishId)) return;
-  if (dishCardPhotoCache[dishId] === false) return;
+  if (resolveDishPhotoUrl(dishId)) return;
+  if (dishPhotoCache[dishId] === false) return;
   if (dishCardPhotoInflight[dishId]) return;
 
   setTimeout(() => {
@@ -1103,18 +1101,47 @@ const CARD_TEXT_SHADOW = "0 2px 8px rgba(0,0,0,0.9)";
 
 // ─── CARD VISUALS ─────────────────────────────────────────────────────────────
 function DishCard({ dish, dim }) {
-  const [, setPhotoTick] = useState(0);
+  const [photoUrl, setPhotoUrl] = useState(() => dishPhotoCache[dish.id] || resolveDishPhotoUrl(dish.id));
   const [loaded, setLoaded] = useState(false);
   const [imgErr, setImgErr] = useState(false);
-  const photoUrl = getCachedDishCardPhoto(dish.id);
   const showImg = Boolean(photoUrl) && !imgErr;
 
-  useEffect(() => subscribeDishCardPhotos(() => setPhotoTick((n) => n + 1)), []);
-
   useEffect(() => {
+    let cancelled = false;
     setLoaded(false);
     setImgErr(false);
-  }, [photoUrl]);
+
+    const cached = dishPhotoCache[dish.id] || resolveDishPhotoUrl(dish.id);
+    if (cached) {
+      setPhotoUrl(cached);
+      return;
+    }
+
+    setPhotoUrl(null);
+
+    const query = DISH_PHOTO_QUERIES[dish.id];
+    if (!query) return;
+
+    getDishCardPhoto(query, dish.id)
+      .then((url) => {
+        if (!cancelled && url) setPhotoUrl(url);
+      })
+      .catch((err) => {
+        console.warn(`Unsplash fetch failed (dish ${dish.id}):`, err.message);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dish.id]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeDishCardPhotos(() => {
+      const url = dishPhotoCache[dish.id] || resolveDishPhotoUrl(dish.id);
+      if (url) setPhotoUrl((prev) => prev || url);
+    });
+    return unsubscribe;
+  }, [dish.id]);
 
   return (
     <div style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", background:`radial-gradient(ellipse at 35% 25%, ${dish.g2} 0%, ${dish.g1} 65%)` }}>
@@ -1125,7 +1152,7 @@ function DishCard({ dish, dim }) {
           style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity: loaded ? 1 : 0, transition:"opacity 0.4s", pointerEvents:"none", zIndex:1 }}
         />
       )}
-      {(!showImg || !loaded) && (
+      {!showImg && (
         <>
           <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-65%)", width:230, height:230, borderRadius:"50%", background:`radial-gradient(circle, ${dish.glow} 0%, transparent 70%)`, filter:"blur(32px)" }} />
           <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-72%)", fontSize:118, lineHeight:1, userSelect:"none", pointerEvents:"none", filter:"drop-shadow(0 8px 32px rgba(0,0,0,0.5))", animation:"floaty 3s ease-in-out infinite" }}>
