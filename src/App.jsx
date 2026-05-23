@@ -248,6 +248,7 @@ function mapGooglePlace(place, userLat, userLng) {
   const lng = place.geometry?.location?.lng;
   return {
     id: place.place_id,
+    placeId: place.place_id,
     name: place.name,
     cuisine: cuisineFromTypes(place.types),
     rating: place.rating != null ? String(place.rating) : "—",
@@ -403,7 +404,112 @@ async function searchRestaurants(lat, lng, term, tasteTags = []) {
 }
 
 async function fetchDetail(businessId, restaurant) {
-  return getMockDetail(businessId, restaurant);
+  if (isMockPlaceId(businessId)) {
+    return getMockDetail(businessId, restaurant);
+  }
+  const placeId = restaurant?.placeId || businessId;
+  if (!placeId || !CONFIG.GOOGLE_PLACES_API_KEY) {
+    return buildDetailFromSearch(restaurant);
+  }
+  try {
+    return await fetchGooglePlaceDetails(placeId, restaurant);
+  } catch (err) {
+    console.warn("Place details failed, using search data:", err.message);
+    return buildDetailFromSearch(restaurant);
+  }
+}
+
+const PLACE_DETAIL_FIELDS =
+  "name,formatted_phone_number,website,opening_hours,photos,reviews,price_level,formatted_address,url,rating,user_ratings_total";
+
+function isMockPlaceId(id) {
+  return typeof id === "string" && /^[rtb]\d+$/.test(id);
+}
+
+function buildDetailFromSearch(r = {}) {
+  const phone = r.phone || "";
+  return {
+    id: r.id,
+    placeId: r.placeId || r.id,
+    name: r.name || "Restaurant",
+    cuisine: r.cuisine || "Restaurant",
+    allCategories: [r.cuisine || "Restaurant"],
+    rating: r.rating || "—",
+    reviewCount: r.reviewCount || 0,
+    price: r.price || "$$",
+    phone,
+    phoneRaw: phone.replace(/\D/g, ""),
+    address: r.address || "",
+    lat: r.lat,
+    lng: r.lng,
+    photos: r.primaryPhoto ? [r.primaryPhoto] : [],
+    primaryPhoto: r.primaryPhoto || null,
+    website: r.website || null,
+    googleMapsUrl:
+      r.lat != null && r.lng != null
+        ? `https://maps.google.com/?q=${r.lat},${r.lng}`
+        : null,
+    orderUrl: r.orderUrl || null,
+    isPartner: r.isPartner || false,
+    deliversYelp: r.deliversYelp || false,
+    doesPickup: r.doesPickup ?? true,
+    doesReservations: false,
+    isOpenNow: r.isOpenNow ?? true,
+    weekdayText: [],
+    hours: [],
+    reviews: [],
+    yelpUrl: null,
+  };
+}
+
+function mapGooglePlaceDetails(result, restaurant) {
+  const r = restaurant || {};
+  const photos = (result.photos || [])
+    .slice(0, 4)
+    .map((p) => placePhotoUrl(p.photo_reference, 800))
+    .filter(Boolean);
+  const phone = result.formatted_phone_number || r.phone || "";
+  const fallback = buildDetailFromSearch(r);
+
+  return {
+    ...fallback,
+    id: r.id || result.place_id,
+    placeId: result.place_id || r.placeId || r.id,
+    name: result.name || r.name,
+    rating: result.rating != null ? String(result.rating) : r.rating,
+    reviewCount: result.user_ratings_total ?? r.reviewCount ?? 0,
+    price:
+      result.price_level != null
+        ? priceFromLevel(result.price_level)
+        : r.price || "$$",
+    phone,
+    phoneRaw: phone.replace(/\D/g, ""),
+    address: result.formatted_address || r.address,
+    photos: photos.length ? photos : fallback.photos,
+    primaryPhoto: photos[0] || r.primaryPhoto || null,
+    website: result.website || null,
+    googleMapsUrl: result.url || fallback.googleMapsUrl,
+    isOpenNow: result.opening_hours?.open_now ?? r.isOpenNow ?? true,
+    weekdayText: result.opening_hours?.weekday_text || [],
+    hours: [],
+    reviews: (result.reviews || []).map((rv, i) => ({
+      id: `gp-${i}-${rv.author_name}`,
+      author: rv.author_name,
+      rating: rv.rating,
+      text: rv.text,
+      date: rv.relative_time_description,
+    })),
+    yelpUrl: null,
+  };
+}
+
+async function fetchGooglePlaceDetails(placeId, restaurant) {
+  const data = await fetchPlacesApi("/place/details/json", {
+    place_id: placeId,
+    fields: PLACE_DETAIL_FIELDS,
+  });
+  if (!data.result) throw new Error("No place details returned");
+  return mapGooglePlaceDetails(data.result, restaurant);
 }
 
 // ─── MOCK DATA ────────────────────────────────────────────────────────────────
@@ -734,6 +840,22 @@ const CSS = `
   .discover-action.save {
     background: linear-gradient(135deg, #E8000A, #FF3322);
     box-shadow: 0 8px 28px rgba(232, 0, 10, 0.55);
+  }
+
+  .detail-skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.05) 25%,
+      rgba(255, 255, 255, 0.1) 50%,
+      rgba(255, 255, 255, 0.05) 75%
+    );
+    background-size: 200% 100%;
+    animation: detailShimmer 1.2s ease-in-out infinite;
+    border-radius: 10px;
+  }
+  @keyframes detailShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 
   .swipe-tutorial {
@@ -1101,6 +1223,29 @@ function Onboard({ step, setStep, tasteTags, setTasteTags, onDone, onLocationGra
 }
 
 // ─── RESTAURANT DETAIL MODAL ──────────────────────────────────────────────────
+function DetailSkeleton() {
+  return (
+    <div style={{ padding:"16px 20px" }}>
+      <div className="detail-skeleton" style={{ height:28, width:"72%", marginBottom:10 }} />
+      <div className="detail-skeleton" style={{ height:14, width:"40%", marginBottom:16 }} />
+      <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="detail-skeleton" style={{ flex:1, height:72 }} />
+        ))}
+      </div>
+      <div style={{ display:"flex", gap:8, marginBottom:20 }}>
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="detail-skeleton" style={{ flex:1, height:56, borderRadius:16 }} />
+        ))}
+      </div>
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="detail-skeleton" style={{ height:52, marginBottom:10 }} />
+      ))}
+      <div className="detail-skeleton" style={{ height:88, marginTop:8 }} />
+    </div>
+  );
+}
+
 function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
   const [detail,      setDetail]      = useState(null);
   const [loading,     setLoading]     = useState(true);
@@ -1110,17 +1255,25 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
   const [imgErrs,     setImgErrs]     = useState({});
 
   useEffect(() => {
+    setDetail(null);
+    setLoading(true);
+    setActivePhoto(0);
+    setShowHours(false);
+    setImgErrs({});
     fetchDetail(restaurant.id, restaurant)
-      .then(d => { setDetail(d); setLoading(false); })
-      .catch(() => { setLoading(false); });
+      .then((d) => setDetail(d))
+      .catch(() => setDetail(buildDetailFromSearch(restaurant)))
+      .finally(() => setLoading(false));
   }, [restaurant.id]);
 
-  const d          = detail || restaurant;
-  const photos     = (detail?.photos?.length ? detail.photos : [restaurant.primaryPhoto]).filter(Boolean);
+  const d          = detail || buildDetailFromSearch(restaurant);
+  const photos     = (d.photos?.length ? d.photos : [restaurant.primaryPhoto]).filter(Boolean);
   const isPartner  = d.isPartner || restaurant.isPartner;
   const orderUrl   = d.orderUrl  || restaurant.orderUrl;
   const website    = d.website   || restaurant.website;
   const hasPhoto   = photos.length > 0 && !imgErrs[activePhoto];
+  const mapsUrl    = d.googleMapsUrl || (d.lat != null && d.lng != null ? `https://maps.google.com/?q=${d.lat},${d.lng}` : null);
+  const todayName  = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date().getDay()];
 
   const handleOrder = () => {
     if (isPartner && orderUrl) {
@@ -1181,6 +1334,10 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
 
         {/* Scrollable content */}
         <div style={{ flex:1, overflowY:"auto", minHeight:0 }}>
+          {loading ? (
+            <DetailSkeleton />
+          ) : (
+          <>
 
           {/* Name + rating */}
           <div style={{ padding:"16px 20px 0" }}>
@@ -1228,9 +1385,9 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
           <div style={{ padding:"16px 20px", display:"flex", gap:8, borderBottom:"1px solid rgba(255,255,255,0.06)" }}>
 
             {/* Directions */}
-            <button className="actionbtn" onClick={() => window.open(`https://maps.google.com/?q=${d.lat},${d.lng}`, "_blank")}>
+            <button className="actionbtn" onClick={() => mapsUrl && window.open(mapsUrl, "_blank")} style={{ opacity: mapsUrl ? 1 : 0.5 }}>
               <div className="actionicon" style={{ background:"rgba(79,195,247,0.15)", border:"1px solid rgba(79,195,247,0.25)" }}>📍</div>
-              <span className="actionlabel" style={{ color:"#4FC3F7" }}>Directions</span>
+              <span className="actionlabel" style={{ color: mapsUrl ? "#4FC3F7" : "rgba(255,255,255,0.3)" }}>Directions</span>
             </button>
 
             {/* Call */}
@@ -1304,8 +1461,8 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
                 <div style={{ color:"#fff", fontSize:13, fontWeight:700 }}>{d.address || restaurant.address}</div>
                 <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, marginTop:3 }}>{restaurant.distanceMiles} miles from your location</div>
               </div>
-              <button onClick={() => window.open(`https://maps.google.com/?q=${d.lat},${d.lng}`, "_blank")}
-                style={{ background:"rgba(79,195,247,0.1)", border:"1px solid rgba(79,195,247,0.25)", borderRadius:8, padding:"5px 10px", color:"#4FC3F7", fontSize:11, fontWeight:700, cursor:"pointer", flexShrink:0 }}>
+              <button onClick={() => mapsUrl && window.open(mapsUrl, "_blank")}
+                style={{ background:"rgba(79,195,247,0.1)", border:"1px solid rgba(79,195,247,0.25)", borderRadius:8, padding:"5px 10px", color:"#4FC3F7", fontSize:11, fontWeight:700, cursor: mapsUrl ? "pointer" : "default", flexShrink:0, opacity: mapsUrl ? 1 : 0.5 }}>
                 Map →
               </button>
             </div>
@@ -1325,8 +1482,7 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
             )}
 
             {/* Hours */}
-            {!loading && (
-              <div className="detailrow" style={{ flexDirection:"column", gap:0 }}>
+            <div className="detailrow" style={{ flexDirection:"column", gap:0 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", width:"100%", marginBottom: showHours ? 10 : 0 }}>
                   <div style={{ display:"flex", gap:12, alignItems:"center" }}>
                     <span style={{ fontSize:18 }}>🕐</span>
@@ -1334,7 +1490,15 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
                       <div style={{ color: d.isOpenNow ? "#81C784" : "#EF5350", fontSize:13, fontWeight:800 }}>
                         {d.isOpenNow ? "Open Now" : "Currently Closed"}
                       </div>
-                      {d.hours?.length > 0 && (() => {
+                      {d.weekdayText?.length > 0 && !showHours && (() => {
+                        const todayLine = d.weekdayText.find((line) => line.startsWith(todayName));
+                        return todayLine ? (
+                          <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, marginTop:2 }}>
+                            {todayLine.replace(/^[^:]+:\s*/, "")}
+                          </div>
+                        ) : null;
+                      })()}
+                      {!d.weekdayText?.length && d.hours?.length > 0 && (() => {
                         const today = new Date().getDay();
                         const yd    = today === 0 ? 6 : today - 1;
                         const th    = d.hours.find(h => h.day === yd);
@@ -1342,13 +1506,28 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
                       })()}
                     </div>
                   </div>
-                  {d.hours?.length > 0 && (
+                  {(d.weekdayText?.length > 0 || d.hours?.length > 0) && (
                     <button onClick={() => setShowHours(s => !s)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, padding:"4px 10px", color:"rgba(255,255,255,0.5)", fontSize:11, fontWeight:700, cursor:"pointer" }}>
                       {showHours ? "Hide" : "All Hours"}
                     </button>
                   )}
                 </div>
-                {showHours && d.hours?.length > 0 && (
+                {showHours && d.weekdayText?.length > 0 && (
+                  <div style={{ width:"100%", background:"rgba(255,255,255,0.04)", borderRadius:10, padding:"10px 12px" }}>
+                    {d.weekdayText.map((line) => {
+                      const isToday = line.startsWith(todayName);
+                      const [dayPart, ...timeParts] = line.split(": ");
+                      const timePart = timeParts.join(": ");
+                      return (
+                        <div key={line} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0", fontSize:12, color: isToday ? "#fff" : "rgba(255,255,255,0.45)", fontWeight: isToday ? 700 : 500, gap:12 }}>
+                          <span>{dayPart}{isToday ? " (today)" : ""}</span>
+                          <span style={{ textAlign:"right" }}>{timePart}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {showHours && !d.weekdayText?.length && d.hours?.length > 0 && (
                   <div style={{ width:"100%", background:"rgba(255,255,255,0.04)", borderRadius:10, padding:"10px 12px" }}>
                     {d.hours.map(h => {
                       const today = new Date().getDay();
@@ -1364,7 +1543,6 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
                   </div>
                 )}
               </div>
-            )}
 
             {/* Yelp link */}
             {d.yelpUrl && (
@@ -1383,10 +1561,10 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
           </div>
 
           {/* Reviews */}
-          {detail?.reviews?.length > 0 && (
+          {d.reviews?.length > 0 && (
             <div style={{ padding:"14px 20px" }}>
               <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, fontWeight:700, letterSpacing:1, marginBottom:10 }}>RECENT REVIEWS</div>
-              {detail.reviews.map(rv => (
+              {d.reviews.map(rv => (
                 <div key={rv.id} style={{ background:"rgba(255,255,255,0.04)", borderRadius:14, padding:"12px 14px", border:"1px solid rgba(255,255,255,0.06)", marginBottom:10 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -1410,15 +1588,9 @@ function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
             </div>
           )}
 
-          {/* Loading state */}
-          {loading && (
-            <div style={{ padding:"20px", display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
-              <div style={{ fontSize:28, animation:"spin 1.2s linear infinite" }}>⏳</div>
-              <div style={{ color:"rgba(255,255,255,0.4)", fontSize:13 }}>Loading restaurant details...</div>
-            </div>
-          )}
-
           <div style={{ height:28 }} />
+          </>
+          )}
         </div>
       </div>
     </div>
