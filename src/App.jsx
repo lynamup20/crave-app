@@ -78,35 +78,35 @@ const TASTE_TAGS = [
 // Taste tag → dish category IDs + Google Places search modifiers
 const flavorToCategories = {
   "Spicy 🌶️": {
-    dishIds: [1, 7, 18, 26, 13, 27],
+    dishIds: [1, 7, 13, 18, 26],
     placesKeyword: "spicy",
   },
   "Savory 🥩": {
-    dishIds: [2, 3, 5, 6, 11, 15, 19, 25, 28],
+    dishIds: [6, 3, 28, 11, 17],
     placesKeyword: "savory",
   },
   "Sweet 🍯": {
-    dishIds: [12, 21, 24, 17, 30, 22],
+    dishIds: [12, 21, 30, 24],
     placesKeyword: "sweet dessert",
   },
   "Fresh 🥗": {
-    dishIds: [4, 8, 16, 23, 29, 9],
+    dishIds: [8, 16, 23, 29],
     placesKeyword: "fresh healthy",
   },
   "Comfort 🍲": {
-    dishIds: [1, 3, 5, 7, 14, 20, 6, 17, 22],
+    dishIds: [9, 14, 5, 20, 22],
     placesKeyword: "comfort food",
   },
   "Premium ✨": {
-    dishIds: [4, 28, 6, 15],
+    dishIds: [4, 6, 28, 8],
     rankby: "prominence",
   },
   "Quick 🏃": {
-    dishIds: [2, 3, 27, 29, 24, 21],
+    dishIds: [2, 27, 25, 29, 26],
     placesKeyword: "quick",
   },
   "Vegan 🌱": {
-    dishIds: [16, 9, 23, 14],
+    dishIds: [16, 23, 15],
     placesKeyword: "vegan vegetarian",
   },
   "Seafood 🦞": {
@@ -119,26 +119,28 @@ const flavorToCategories = {
   },
 };
 
-function flavorBaseLabel(tag) {
-  return tag.split(/\s+/)[0];
-}
-
 function orderDishesByFlavorProfile(dishes, tasteTags) {
   if (!tasteTags?.length) return dishes;
-  const scoreDish = (dish) => {
-    let score = 0;
-    for (const tag of tasteTags) {
-      const flavor = flavorToCategories[tag];
-      if (flavor?.dishIds?.includes(dish.id)) score += 3;
-      const base = flavorBaseLabel(tag);
-      if (dish.tags.some((t) => t.toLowerCase() === base.toLowerCase())) score += 2;
-      if (base === "Spicy" && dish.tags.some((t) => /spicy|spiced|hot/i.test(t))) score += 1;
-      if (base === "Fresh" && dish.tags.some((t) => /fresh|light/i.test(t))) score += 1;
-      if (base === "Quick" && dish.tags.some((t) => /quick|street/i.test(t))) score += 1;
+
+  const orderedIds = [];
+  const seen = new Set();
+
+  for (const tag of tasteTags) {
+    const flavor = flavorToCategories[tag];
+    if (!flavor?.dishIds) continue;
+    for (const id of flavor.dishIds) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        orderedIds.push(id);
+      }
     }
-    return score;
-  };
-  return [...dishes].sort((a, b) => scoreDish(b) - scoreDish(a) || a.id - b.id);
+  }
+
+  const dishById = new Map(dishes.map((d) => [d.id, d]));
+  const matching = orderedIds.map((id) => dishById.get(id)).filter(Boolean);
+  const rest = dishes.filter((d) => !seen.has(d.id));
+
+  return [...matching, ...rest];
 }
 
 function buildFlavorPlacesParams(tasteTags) {
