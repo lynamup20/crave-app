@@ -1113,67 +1113,40 @@ const CARD_TEXT_SHADOW = "0 2px 8px rgba(0,0,0,0.9)";
 
 // ─── CARD VISUALS ─────────────────────────────────────────────────────────────
 function DishCard({ dish, dim }) {
-  const [photoUrl, setPhotoUrl] = useState(
-    () => DISH_PHOTO_CACHE[dish.id] || readDishPhotoFromStorage(dish.id) || null,
-  );
-  const [loaded, setLoaded] = useState(
-    () => Boolean(DISH_PHOTO_CACHE[dish.id] || readDishPhotoFromStorage(dish.id)),
-  );
-  const [imgErr, setImgErr] = useState(false);
-  const showImg = Boolean(photoUrl) && !imgErr;
+  const [photoTick, setPhotoTick] = useState(0);
+  void photoTick;
+  const photoUrl = resolveDishPhotoUrl(dish.id);
+
+  useEffect(() => subscribeDishCardPhotos(() => setPhotoTick((n) => n + 1)), []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const cached = DISH_PHOTO_CACHE[dish.id] || readDishPhotoFromStorage(dish.id);
-    if (cached) {
-      DISH_PHOTO_CACHE[dish.id] = cached;
-      setPhotoUrl((prev) => prev || cached);
-      setLoaded(true);
-      return;
-    }
+    if (photoUrl) return;
 
     const query = DISH_PHOTO_QUERIES[dish.id];
     if (!query || DISH_PHOTO_CACHE[dish.id] === false) return;
 
-    getDishCardPhoto(query, dish.id)
-      .then((url) => {
-        if (!cancelled && url) {
-          DISH_PHOTO_CACHE[dish.id] = url;
-          setPhotoUrl(url);
-        }
-      })
-      .catch((err) => {
-        console.warn(`Unsplash fetch failed (dish ${dish.id}):`, err.message);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [dish.id]);
-
-  useEffect(() => {
-    const unsubscribe = subscribeDishCardPhotos(() => {
-      const url = DISH_PHOTO_CACHE[dish.id] || readDishPhotoFromStorage(dish.id);
-      if (url) {
-        DISH_PHOTO_CACHE[dish.id] = url;
-        setPhotoUrl((prev) => prev || url);
-        setLoaded(true);
-      }
+    getDishCardPhoto(query, dish.id).catch((err) => {
+      console.warn(`Unsplash fetch failed (dish ${dish.id}):`, err.message);
     });
-    return unsubscribe;
-  }, [dish.id]);
+  }, [dish.id, photoUrl]);
 
   return (
     <div style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", background:`radial-gradient(ellipse at 35% 25%, ${dish.g2} 0%, ${dish.g1} 65%)` }}>
-      {showImg && (
-        <img
-          src={photoUrl} alt={dish.name} draggable={false}
-          onLoad={() => setLoaded(true)} onError={() => setImgErr(true)}
-          style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity: loaded ? 1 : 0, transition:"opacity 0.4s", pointerEvents:"none", zIndex:1 }}
+      {photoUrl && (
+        <div
+          aria-hidden
+          style={{
+            position:"absolute",
+            inset:0,
+            backgroundImage:`url(${photoUrl})`,
+            backgroundSize:"cover",
+            backgroundPosition:"center",
+            pointerEvents:"none",
+            zIndex:1,
+          }}
         />
       )}
-      {!showImg && (
+      {!photoUrl && (
         <>
           <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-65%)", width:230, height:230, borderRadius:"50%", background:`radial-gradient(circle, ${dish.glow} 0%, transparent 70%)`, filter:"blur(32px)" }} />
           <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-72%)", fontSize:118, lineHeight:1, userSelect:"none", pointerEvents:"none", filter:"drop-shadow(0 8px 32px rgba(0,0,0,0.5))", animation:"floaty 3s ease-in-out infinite" }}>
@@ -2230,6 +2203,7 @@ export default function App() {
   const swipesLeft   = Math.max(0, totalAllowed - swipesUsed);
   const swipesLow    = swipesLeft <= 3 && swipesLeft > 0 && !isPremium;
   const currentCard  = layer === "categories" ? orderedDishes[catIdx] : restaurants[restIdx];
+  const categoryDish = orderedDishes[catIdx];
   const isDone       = layer === "categories" ? catIdx >= orderedDishes.length : restIdx >= restaurants.length;
   const likeAlpha    = Math.min(1, Math.max(0,  dx / 85));
   const nopeAlpha    = Math.min(1, Math.max(0, -dx / 85));
@@ -2272,6 +2246,7 @@ export default function App() {
 
   const goBackToCategories = useCallback(() => {
     if (exiting || layer !== "restaurants") return;
+    setDetailTarget(null);
     setExiting(true);
     setDx(0);
     setDy(520);
@@ -2282,6 +2257,7 @@ export default function App() {
       setDx(0);
       setDy(0);
       setExiting(false);
+      notifyDishCardPhotoListeners();
     }, 420);
   }, [exiting, layer]);
 
@@ -2564,25 +2540,41 @@ export default function App() {
                 </button>
               )}
 
-              {/* Ghost stack */}
-              {!isDone && !fetching && [2, 1].map(o => {
-                if (layer === "categories") {
-                  const bg = orderedDishes[catIdx + o];
-                  if (!bg) return null;
-                  return (
-                    <div key={bg.id} style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", transform:`scale(${1 - o * 0.035}) translateY(${o * 13}px)`, zIndex: 10 - o }}>
-                      <DishCard dish={bg} dim />
-                    </div>
-                  );
-                } else {
-                  const bg = restaurants[restIdx + o];
-                  if (!bg || !activeCat) return null;
-                  return (
-                    <div key={bg.id} style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", transform:`scale(${1 - o * 0.035}) translateY(${o * 13}px)`, zIndex: 10 - o }}>
-                      <RestCard restaurant={bg} category={activeCat} dim />
-                    </div>
+              {/* Ghost stack — dish cards stay mounted (hidden) while browsing restaurants */}
+              {!isDone && [2, 1].flatMap((o) => {
+                const items = [];
+                const dishBg = orderedDishes[catIdx + o];
+                if (dishBg) {
+                  const showCategory = layer === "categories";
+                  items.push(
+                    <div
+                      key={`dish-ghost-${dishBg.id}`}
+                      style={{
+                        position:"absolute",
+                        inset:0,
+                        borderRadius:26,
+                        overflow:"hidden",
+                        transform:`scale(${1 - o * 0.035}) translateY(${o * 13}px)`,
+                        zIndex: showCategory ? 10 - o : 0,
+                        visibility: showCategory ? "visible" : "hidden",
+                        pointerEvents:"none",
+                      }}
+                    >
+                      <DishCard dish={dishBg} dim />
+                    </div>,
                   );
                 }
+                if (layer === "restaurants" && !fetching) {
+                  const restBg = restaurants[restIdx + o];
+                  if (restBg && activeCat) {
+                    items.push(
+                      <div key={`rest-ghost-${restBg.id}`} style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", transform:`scale(${1 - o * 0.035}) translateY(${o * 13}px)`, zIndex: 10 - o }}>
+                        <RestCard restaurant={restBg} category={activeCat} dim />
+                      </div>,
+                    );
+                  }
+                }
+                return items;
               })}
 
               {/* Fetching */}
@@ -2604,18 +2596,30 @@ export default function App() {
                 </div>
               )}
 
-              {/* Main swipe card */}
-              {!isDone && !fetching && !fetchErr && currentCard && (
+              {/* Main swipe card — category DishCard stays mounted under restaurant layer */}
+              {!isDone && !fetchErr && categoryDish && (
                 <div
                   className={`swipecard${exiting ? " leaving" : ""}`}
                   style={{ transform:`translateX(${dx}px) translateY(${dy}px) rotate(${dx * 0.065}deg)`, cursor: dragging ? "grabbing" : "grab", touchAction:"none", zIndex:20 }}
                   onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
                   onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}
                 >
-                  {layer === "categories"
-                    ? <DishCard dish={currentCard} />
-                    : <RestCard restaurant={currentCard} category={activeCat} />
-                  }
+                  {categoryDish && (
+                    <div
+                      style={{
+                        position:"absolute",
+                        inset:0,
+                        visibility: layer === "categories" ? "visible" : "hidden",
+                        pointerEvents: layer === "categories" ? "auto" : "none",
+                      }}
+                    >
+                      <DishCard dish={categoryDish} />
+                    </div>
+                  )}
+
+                  {layer === "restaurants" && !fetching && currentCard && (
+                    <RestCard restaurant={currentCard} category={activeCat} />
+                  )}
 
                   {showWall && <SwipeWall onShare={handleShare} onUpgrade={handleUpgrade} isShare={wallMode === "share"} />}
 
@@ -2629,25 +2633,25 @@ export default function App() {
 
                   {/* Card info */}
                   <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"20px 20px 22px", zIndex: showWall ? 1 : 5 }}>
-                    {layer === "categories" ? (
+                    {layer === "categories" && categoryDish ? (
                       <div>
                         <div style={{ fontSize:26, fontWeight:900, color:"#fff", letterSpacing:"-0.5px", lineHeight:1.1, textShadow: CARD_TEXT_SHADOW }}>
-                          {currentCard.isDynamic ? currentCard.name : currentCard.name}
+                          {categoryDish.isDynamic ? categoryDish.name : categoryDish.name}
                         </div>
-                        <div style={{ color: currentCard.isDynamic ? "#FF6060" : "rgba(255,255,255,0.5)", fontSize:12, marginTop:4, fontWeight:600, textShadow: CARD_TEXT_SHADOW }}>
-                          {currentCard.isDynamic ? "Personalized from your likes" : "Swipe right to find restaurants near you"}
+                        <div style={{ color: categoryDish.isDynamic ? "#FF6060" : "rgba(255,255,255,0.5)", fontSize:12, marginTop:4, fontWeight:600, textShadow: CARD_TEXT_SHADOW }}>
+                          {categoryDish.isDynamic ? "Personalized from your likes" : "Swipe right to find restaurants near you"}
                         </div>
                         <div style={{ display:"flex", gap:5, marginTop:10, flexWrap:"wrap" }}>
-                          {currentCard.tags.map(t => <span key={t} className="chip">{t}</span>)}
+                          {categoryDish.tags.map(t => <span key={t} className="chip">{t}</span>)}
                         </div>
-                        <div style={{ marginTop:12, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(16px)", borderRadius:13, padding:"10px 14px", border:"1px solid rgba(255,255,255,0.1)", display:"flex", alignItems:"center", gap:8 }}>
+                        <div style={{ marginTop:12, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(16px)", borderRadius:13, padding:"10px 14px", border:"1px solid rgba(255,255,255,0.10)", display:"flex", alignItems:"center", gap:8 }}>
                           <span style={{ fontSize:16 }}>📍</span>
                           <span style={{ color:"rgba(255,255,255,0.75)", fontSize:12.5, fontWeight:700 }}>
                             {userLoc ? "Searching near your location" : "Enable location for real results"}
                           </span>
                         </div>
                       </div>
-                    ) : (
+                    ) : layer === "restaurants" && currentCard ? (
                       <div>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                           <div style={{ flex:1, minWidth:0 }}>
@@ -2679,7 +2683,7 @@ export default function App() {
                           </button>
                         </div>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               )}
