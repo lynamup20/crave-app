@@ -14,6 +14,8 @@ import {
   updateUserProfile,
 } from "./services/craveSupabase.js";
 
+const DISH_PHOTO_CACHE = Object.create(null);
+
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
   GOOGLE_PLACES_API_KEY:
@@ -340,18 +342,25 @@ const DISH_PHOTO_QUERIES = {
   30: "tiramisu chocolate dessert",
 };
 
-const dishPhotoCache = Object.create(null);
 const dishCardPhotoInflight = Object.create(null);
 const dishCardPhotoListeners = new Set();
 const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
 
 function dishPhotoStorageKey(dishId) {
+  return `crave_photo_${dishId}`;
+}
+
+function legacyDishPhotoStorageKey(dishId) {
   return `crave_dish_photo_${dishId}`;
 }
 
 function readDishPhotoFromStorage(dishId) {
   try {
-    return localStorage.getItem(dishPhotoStorageKey(dishId)) || "";
+    return (
+      localStorage.getItem(dishPhotoStorageKey(dishId)) ||
+      localStorage.getItem(legacyDishPhotoStorageKey(dishId)) ||
+      ""
+    );
   } catch {
     return "";
   }
@@ -359,7 +368,10 @@ function readDishPhotoFromStorage(dishId) {
 
 function writeDishPhotoToStorage(dishId, url) {
   try {
-    if (url) localStorage.setItem(dishPhotoStorageKey(dishId), url);
+    if (url) {
+      localStorage.setItem(dishPhotoStorageKey(dishId), url);
+      localStorage.setItem(legacyDishPhotoStorageKey(dishId), url);
+    }
   } catch {
     /* ignore quota / private mode */
   }
@@ -369,7 +381,7 @@ function hydrateDishPhotosFromStorage() {
   for (const id of Object.keys(DISH_PHOTO_QUERIES)) {
     const dishId = Number(id);
     const stored = readDishPhotoFromStorage(dishId);
-    if (stored) dishPhotoCache[dishId] = stored;
+    if (stored) DISH_PHOTO_CACHE[dishId] = stored;
   }
 }
 
@@ -377,10 +389,10 @@ hydrateDishPhotosFromStorage();
 
 function resolveDishPhotoUrl(dishId) {
   if (typeof dishId !== "number") return null;
-  if (typeof dishPhotoCache[dishId] === "string") return dishPhotoCache[dishId];
+  if (typeof DISH_PHOTO_CACHE[dishId] === "string") return DISH_PHOTO_CACHE[dishId];
   const stored = readDishPhotoFromStorage(dishId);
   if (stored) {
-    dishPhotoCache[dishId] = stored;
+    DISH_PHOTO_CACHE[dishId] = stored;
     return stored;
   }
   return null;
@@ -409,7 +421,7 @@ async function getDishCardPhoto(query, dishId) {
   if (typeof dishId === "number") {
     const cached = resolveDishPhotoUrl(dishId);
     if (cached) return cached;
-    if (dishPhotoCache[dishId] === false) return null;
+    if (DISH_PHOTO_CACHE[dishId] === false) return null;
     if (dishCardPhotoInflight[dishId]) return dishCardPhotoInflight[dishId];
   }
 
@@ -433,10 +445,10 @@ async function getDishCardPhoto(query, dishId) {
 
     if (typeof dishId === "number") {
       if (photoUrl) {
-        dishPhotoCache[dishId] = photoUrl;
+        DISH_PHOTO_CACHE[dishId] = photoUrl;
         writeDishPhotoToStorage(dishId, photoUrl);
       } else {
-        dishPhotoCache[dishId] = false;
+        DISH_PHOTO_CACHE[dishId] = false;
       }
       delete dishCardPhotoInflight[dishId];
       notifyDishCardPhotoListeners();
@@ -453,7 +465,7 @@ async function getDishCardPhoto(query, dishId) {
     return await fetchPromise;
   } catch (err) {
     if (typeof dishId === "number") {
-      dishPhotoCache[dishId] = false;
+      DISH_PHOTO_CACHE[dishId] = false;
       delete dishCardPhotoInflight[dishId];
       notifyDishCardPhotoListeners();
     }
@@ -464,7 +476,7 @@ async function getDishCardPhoto(query, dishId) {
 function scheduleDishPhotoFetch(dishId, query, staggerIndex) {
   if (typeof dishId !== "number" || !query) return;
   if (resolveDishPhotoUrl(dishId)) return;
-  if (dishPhotoCache[dishId] === false) return;
+  if (DISH_PHOTO_CACHE[dishId] === false) return;
   if (dishCardPhotoInflight[dishId]) return;
 
   setTimeout(() => {
@@ -1101,30 +1113,35 @@ const CARD_TEXT_SHADOW = "0 2px 8px rgba(0,0,0,0.9)";
 
 // ─── CARD VISUALS ─────────────────────────────────────────────────────────────
 function DishCard({ dish, dim }) {
-  const [photoUrl, setPhotoUrl] = useState(() => dishPhotoCache[dish.id] || resolveDishPhotoUrl(dish.id));
-  const [loaded, setLoaded] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState(
+    () => DISH_PHOTO_CACHE[dish.id] || readDishPhotoFromStorage(dish.id) || null,
+  );
+  const [loaded, setLoaded] = useState(
+    () => Boolean(DISH_PHOTO_CACHE[dish.id] || readDishPhotoFromStorage(dish.id)),
+  );
   const [imgErr, setImgErr] = useState(false);
   const showImg = Boolean(photoUrl) && !imgErr;
 
   useEffect(() => {
     let cancelled = false;
-    setLoaded(false);
-    setImgErr(false);
 
-    const cached = dishPhotoCache[dish.id] || resolveDishPhotoUrl(dish.id);
+    const cached = DISH_PHOTO_CACHE[dish.id] || readDishPhotoFromStorage(dish.id);
     if (cached) {
-      setPhotoUrl(cached);
+      DISH_PHOTO_CACHE[dish.id] = cached;
+      setPhotoUrl((prev) => prev || cached);
+      setLoaded(true);
       return;
     }
 
-    setPhotoUrl(null);
-
     const query = DISH_PHOTO_QUERIES[dish.id];
-    if (!query) return;
+    if (!query || DISH_PHOTO_CACHE[dish.id] === false) return;
 
     getDishCardPhoto(query, dish.id)
       .then((url) => {
-        if (!cancelled && url) setPhotoUrl(url);
+        if (!cancelled && url) {
+          DISH_PHOTO_CACHE[dish.id] = url;
+          setPhotoUrl(url);
+        }
       })
       .catch((err) => {
         console.warn(`Unsplash fetch failed (dish ${dish.id}):`, err.message);
@@ -1137,8 +1154,12 @@ function DishCard({ dish, dim }) {
 
   useEffect(() => {
     const unsubscribe = subscribeDishCardPhotos(() => {
-      const url = dishPhotoCache[dish.id] || resolveDishPhotoUrl(dish.id);
-      if (url) setPhotoUrl((prev) => prev || url);
+      const url = DISH_PHOTO_CACHE[dish.id] || readDishPhotoFromStorage(dish.id);
+      if (url) {
+        DISH_PHOTO_CACHE[dish.id] = url;
+        setPhotoUrl((prev) => prev || url);
+        setLoaded(true);
+      }
     });
     return unsubscribe;
   }, [dish.id]);

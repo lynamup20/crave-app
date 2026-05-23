@@ -170,6 +170,28 @@ export async function recordSwipe(userId, restaurant, action) {
   });
 }
 
+const BLOCKED_CUISINES = new Set([
+  "restaurant",
+  "food",
+  "establishment",
+  "point of interest",
+  "store",
+  "bar",
+  "cafe",
+  "meal takeaway",
+  "meal delivery",
+  "lodging",
+  "finance",
+  "health",
+]);
+
+function isValidLearningCuisine(cuisine) {
+  if (!cuisine || typeof cuisine !== "string") return false;
+  const normalized = cuisine.trim();
+  if (normalized.length < 4) return false;
+  return !BLOCKED_CUISINES.has(normalized.toLowerCase());
+}
+
 export async function computeDynamicDish(userId) {
   if (!supabase || !userId) return null;
 
@@ -185,16 +207,16 @@ export async function computeDynamicDish(userId) {
   }
 
   const likes = data || [];
-  if (likes.length < 10) return null;
-
   const counts = {};
+
   for (const row of likes) {
-    const cuisine = row.cuisine_type || "Restaurant";
+    const cuisine = row.cuisine_type;
+    if (!isValidLearningCuisine(cuisine)) continue;
     counts[cuisine] = (counts[cuisine] || 0) + 1;
   }
 
   const top = Object.entries(counts)
-    .filter(([, count]) => count >= 3)
+    .filter(([, count]) => count >= 5)
     .sort((a, b) => b[1] - a[1])[0];
 
   if (!top) return null;
