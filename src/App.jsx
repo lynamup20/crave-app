@@ -703,7 +703,121 @@ const CSS = `
   @keyframes spin    { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   @keyframes floaty  { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
   @keyframes ripple  { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(2.5); opacity: 0; } }
+
+  .discover-actions {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 56px;
+    padding: 10px 0 12px;
+  }
+  .discover-action {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    border: none;
+    font-size: 30px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s, box-shadow 0.15s;
+    color: #fff;
+  }
+  .discover-action:hover { transform: scale(1.06); }
+  .discover-action:active { transform: scale(0.94); }
+  .discover-action.pass {
+    background: linear-gradient(135deg, #5c0000, #8b0000);
+    box-shadow: 0 8px 24px rgba(92, 0, 0, 0.5);
+    border: 1px solid rgba(255, 80, 80, 0.25);
+  }
+  .discover-action.save {
+    background: linear-gradient(135deg, #E8000A, #FF3322);
+    box-shadow: 0 8px 28px rgba(232, 0, 10, 0.55);
+  }
+
+  .swipe-tutorial {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    animation: swipeTutorialFade 2.6s ease forwards;
+  }
+  .swipe-tutorial-hand {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    font-size: 52px;
+    filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.55));
+    opacity: 0.88;
+    animation: swipeTutorialHand 2.2s ease-in-out forwards;
+  }
+  .swipe-tutorial-label {
+    position: absolute;
+    bottom: 18%;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-align: center;
+    white-space: nowrap;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(8px);
+  }
+  @keyframes swipeTutorialHand {
+    0%   { transform: translate(calc(-50% - 72px), -50%) rotate(-14deg); }
+    28%  { transform: translate(calc(-50% + 72px), -50%) rotate(14deg); }
+    38%  { transform: translate(calc(-50% + 72px), -50%) rotate(14deg); }
+    62%  { transform: translate(calc(-50% - 72px), -50%) rotate(-14deg); }
+    72%  { transform: translate(calc(-50% - 72px), -50%) rotate(-14deg); }
+    88%  { transform: translate(-50%, -50%) rotate(0deg); }
+    100% { transform: translate(-50%, -50%) rotate(0deg); opacity: 0.5; }
+  }
+  @keyframes swipeTutorialFade {
+    0%, 75% { opacity: 1; }
+    100% { opacity: 0; }
+  }
 `;
+
+const TUTORIAL_SEEN_KEY = "crave_tutorial_seen";
+
+function hasSeenSwipeTutorial() {
+  try {
+    return localStorage.getItem(TUTORIAL_SEEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function SwipeTutorial({ onComplete }) {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(TUTORIAL_SEEN_KEY, "1");
+      } catch {
+        /* ignore */
+      }
+      onComplete();
+    }, 2600);
+    return () => clearTimeout(timer);
+  }, [onComplete]);
+
+  return (
+    <div className="swipe-tutorial">
+      <div className="swipe-tutorial-hand">👆</div>
+      <div className="swipe-tutorial-label">Swipe right to save · Swipe left to skip</div>
+    </div>
+  );
+}
 
 // ─── CARD VISUALS ─────────────────────────────────────────────────────────────
 function DishCard({ dish, dim }) {
@@ -1614,6 +1728,7 @@ export default function App() {
   const [wallMode,     setWallMode]     = useState("limit");
   const [shareToast,   setShareToast]   = useState(false);
   const [, setDishPhotoTick] = useState(0);
+  const [showSwipeTutorial, setShowSwipeTutorial] = useState(false);
 
   const dsRef    = useRef({ x:0, y:0 });
   const dishPrefetchRef = useRef(false);
@@ -1651,6 +1766,12 @@ export default function App() {
     dishPrefetchRef.current = true;
     prefetchAllDishPhotos(DISHES);
   }, []);
+
+  useEffect(() => {
+    if (screen !== "main" || tab !== "discover") return;
+    if (hasSeenSwipeTutorial()) return;
+    setShowSwipeTutorial(true);
+  }, [screen, tab]);
 
   const restaurants = useMemo(
     () => applyRestaurantFilter(restaurantsRaw, restaurantFilter),
@@ -1952,6 +2073,10 @@ export default function App() {
             )}
 
             <div className="cardstack">
+              {showSwipeTutorial && !isDone && !fetching && !fetchErr && currentCard && (
+                <SwipeTutorial onComplete={() => setShowSwipeTutorial(false)} />
+              )}
+
               {layer === "restaurants" && (
                 <button
                   type="button"
@@ -2107,28 +2232,29 @@ export default function App() {
 
             {/* Action buttons */}
             {!isDone && !fetching && !fetchErr && (
-              <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:16, padding:"10px 0 12px" }}>
-                {[
-                  { fn: () => swipe("left"),                                          s:52, bg:"rgba(244,67,54,0.12)",  bd:"rgba(244,67,54,0.4)",   ic:"✕",  glow:false },
-                  { fn: () => { if (layer==="restaurants") setRestIdx(i=>Math.max(0,i-1)); else setCatIdx(i=>Math.max(0,i-1)); }, s:42, bg:"rgba(100,181,246,0.1)", bd:"rgba(100,181,246,0.3)", ic:"↩",  glow:false },
-                  { fn: () => swipe("right"),                                         s:66, bg:"linear-gradient(135deg,#E8000A,#FF3322)", bd:"none",  ic:"❤️", glow:true  },
-                  { fn: () => swipe("right"),                                         s:42, bg:"rgba(255,215,0,0.1)",   bd:"rgba(255,215,0,0.3)",   ic:"⭐", glow:false },
-                  { fn: () => swipe("right"),                                         s:52, bg:"rgba(76,175,80,0.12)",  bd:"rgba(76,175,80,0.4)",   ic:"✓",  glow:false },
-                ].map((btn, i) => (
-                  <button key={i} onClick={btn.fn}
-                    style={{ width:btn.s, height:btn.s, borderRadius:"50%", background:btn.bg, border: btn.bd !== "none" ? `2px solid ${btn.bd}` : "none", fontSize: btn.s > 58 ? 28 : 20, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", transition:"transform 0.15s", boxShadow: btn.glow ? "0 8px 28px rgba(232,0,10,0.5)" : "none" }}
-                    onMouseEnter={e => e.currentTarget.style.transform = "scale(1.08)"}
-                    onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}
-                    onMouseDown={e => e.currentTarget.style.transform = "scale(0.94)"}
-                    onMouseUp={e => e.currentTarget.style.transform = "scale(1.08)"}
-                  >
-                    {btn.ic}
-                  </button>
-                ))}
+              <div className="discover-actions">
+                <button
+                  type="button"
+                  className="discover-action pass"
+                  onClick={() => swipe("left")}
+                  disabled={exiting}
+                  aria-label="Pass"
+                >
+                  ✕
+                </button>
+                <button
+                  type="button"
+                  className="discover-action save"
+                  onClick={() => swipe("right")}
+                  disabled={exiting}
+                  aria-label="Save"
+                >
+                  ❤️
+                </button>
               </div>
             )}
 
-            {!isDone && !fetching && !fetchErr && (
+            {!isDone && !fetching && !fetchErr && !showSwipeTutorial && (
               <div style={{ color:"rgba(255,255,255,0.16)", fontSize:10, textAlign:"center", paddingBottom:6, fontWeight:600, letterSpacing:"0.05em" }}>
                 {layer === "categories"
                   ? "← skip · swipe right to find spots →"
