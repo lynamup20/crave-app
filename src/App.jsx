@@ -941,6 +941,10 @@ function SwipeTutorial({ onComplete }) {
   );
 }
 
+const CARD_BOTTOM_GRADIENT =
+  "linear-gradient(to bottom, transparent 0%, transparent 30%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.85) 75%, rgba(0,0,0,0.97) 100%)";
+const CARD_TEXT_SHADOW = "0 2px 8px rgba(0,0,0,0.9)";
+
 // ─── CARD VISUALS ─────────────────────────────────────────────────────────────
 function DishCard({ dish, dim }) {
   const [loaded, setLoaded] = useState(false);
@@ -974,7 +978,7 @@ function DishCard({ dish, dim }) {
           </div>
         </>
       )}
-      <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.05) 0%, transparent 38%, transparent 44%, rgba(0,0,0,0.96) 100%)" }} />
+      <div style={{ position:"absolute", inset:0, background: CARD_BOTTOM_GRADIENT }} />
       <div style={{ position:"absolute", inset:0, borderRadius:26, border:"1px solid rgba(255,255,255,0.08)", pointerEvents:"none" }} />
       {dim && <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.58)", borderRadius:26 }} />}
     </div>
@@ -2327,7 +2331,7 @@ export default function App() {
                   <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"20px 20px 22px", zIndex: showWall ? 1 : 5 }}>
                     {layer === "categories" ? (
                       <div>
-                        <div style={{ fontSize:26, fontWeight:900, color:"#fff", letterSpacing:"-0.5px", lineHeight:1.1 }}>{currentCard.name}</div>
+                        <div style={{ fontSize:26, fontWeight:900, color:"#fff", letterSpacing:"-0.5px", lineHeight:1.1, textShadow: CARD_TEXT_SHADOW }}>{currentCard.name}</div>
                         <div style={{ color:"rgba(255,255,255,0.5)", fontSize:12, marginTop:4, fontWeight:600 }}>Swipe right to find restaurants near you</div>
                         <div style={{ display:"flex", gap:5, marginTop:10, flexWrap:"wrap" }}>
                           {currentCard.tags.map(t => <span key={t} className="chip">{t}</span>)}
@@ -2343,8 +2347,8 @@ export default function App() {
                       <div>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                           <div style={{ flex:1, minWidth:0 }}>
-                            <div style={{ fontSize:22, fontWeight:900, color:"#fff", letterSpacing:"-0.5px", lineHeight:1.1 }}>{currentCard.name}</div>
-                            <div style={{ color:"rgba(255,255,255,0.5)", fontSize:12, marginTop:3, fontWeight:600 }}>{currentCard.cuisine}</div>
+                            <div style={{ fontSize:22, fontWeight:900, color:"#fff", letterSpacing:"-0.5px", lineHeight:1.1, textShadow: CARD_TEXT_SHADOW }}>{currentCard.name}</div>
+                            <div style={{ color:"rgba(255,255,255,0.5)", fontSize:12, marginTop:3, fontWeight:600, textShadow: CARD_TEXT_SHADOW }}>{currentCard.cuisine}</div>
                           </div>
                           <div style={{ background:"rgba(0,0,0,0.6)", backdropFilter:"blur(12px)", borderRadius:14, padding:"8px 10px", textAlign:"center", border:"1px solid rgba(255,255,255,0.1)", flexShrink:0, marginLeft:10 }}>
                             <div style={{ fontSize:14 }}>⭐</div>
@@ -2355,7 +2359,7 @@ export default function App() {
                         <div style={{ marginTop:10, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(16px)", borderRadius:13, padding:"10px 14px", border:"1px solid rgba(255,255,255,0.1)" }}>
                           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                             <div style={{ flex:1, minWidth:0 }}>
-                              <div style={{ color:"rgba(255,255,255,0.85)", fontSize:12, fontWeight:700 }}>{currentCard.name}</div>
+                              <div style={{ color:"rgba(255,255,255,0.85)", fontSize:12, fontWeight:700, textShadow: CARD_TEXT_SHADOW }}>{currentCard.name}</div>
                               <div style={{ color:"rgba(255,255,255,0.35)", fontSize:10, marginTop:2 }}>{currentCard.address}</div>
                             </div>
                             <div style={{ background:"rgba(232,0,10,0.2)", border:"1px solid rgba(232,0,10,0.4)", borderRadius:10, padding:"5px 10px", flexShrink:0, marginLeft:8, textAlign:"center" }}>
