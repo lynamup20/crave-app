@@ -343,6 +343,34 @@ const CSS = `
     opacity: 0;
     pointer-events: none;
   }
+  .change-craving-pill {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    transition: background 0.2s, transform 0.15s;
+    pointer-events: auto;
+  }
+  .change-craving-pill:hover {
+    background: rgba(0, 0, 0, 0.72);
+    transform: translateX(-50%) scale(1.03);
+  }
+  .change-craving-pill:active {
+    transform: translateX(-50%) scale(0.97);
+  }
   .chip {
     background: rgba(255,255,255,0.1);
     border: 1px solid rgba(255,255,255,0.1);
@@ -1351,9 +1379,11 @@ export default function App() {
   const [wallMode,     setWallMode]     = useState("limit");
   const [shareToast,   setShareToast]   = useState(false);
 
-  const dsRef  = useRef({ x:0, y:0 });
-  const velRef = useRef(0);
-  const lxRef  = useRef(0);
+  const dsRef    = useRef({ x:0, y:0 });
+  const velRef   = useRef(0);
+  const lxRef    = useRef(0);
+  const dyRawRef = useRef(0);
+  const dxRawRef = useRef(0);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -1408,6 +1438,21 @@ export default function App() {
     }
   }, [userLoc]);
 
+  const goBackToCategories = useCallback(() => {
+    if (exiting || layer !== "restaurants") return;
+    setExiting(true);
+    setDx(0);
+    setDy(520);
+    setTimeout(() => {
+      setLayer("categories");
+      setFetchErr(false);
+      setFetching(false);
+      setDx(0);
+      setDy(0);
+      setExiting(false);
+    }, 420);
+  }, [exiting, layer]);
+
   const swipe = useCallback((dir) => {
     if (exiting) return;
     if (!isPremium && swipesUsed >= totalAllowed) { setWallMode("limit"); setShowWall(true); return; }
@@ -1459,18 +1504,44 @@ export default function App() {
     if (exiting) return;
     const x = e.touches ? e.touches[0].clientX : e.clientX;
     const y = e.touches ? e.touches[0].clientY : e.clientY;
-    dsRef.current = { x, y }; lxRef.current = x; velRef.current = 0; setDragging(true);
+    dsRef.current = { x, y };
+    lxRef.current = x;
+    velRef.current = 0;
+    dyRawRef.current = 0;
+    dxRawRef.current = 0;
+    setDragging(true);
   };
   const onMove = (e) => {
     if (!dragging) return;
     const x = e.touches ? e.touches[0].clientX : e.clientX;
     const y = e.touches ? e.touches[0].clientY : e.clientY;
-    velRef.current = x - lxRef.current; lxRef.current = x;
-    setDx(x - dsRef.current.x); setDy((y - dsRef.current.y) * 0.22);
+    const rawDx = x - dsRef.current.x;
+    const rawDy = y - dsRef.current.y;
+    dxRawRef.current = rawDx;
+    dyRawRef.current = rawDy;
+    velRef.current = x - lxRef.current;
+    lxRef.current = x;
+    if (layer === "restaurants" && rawDy > 0 && rawDy > Math.abs(rawDx)) {
+      setDx(rawDx * 0.12);
+      setDy(rawDy * 0.9);
+    } else {
+      setDx(rawDx);
+      setDy(rawDy * 0.22);
+    }
   };
   const onUp = () => {
     if (!dragging) return;
     setDragging(false);
+    const rawDy = dyRawRef.current;
+    const rawDx = dxRawRef.current;
+    if (
+      layer === "restaurants" &&
+      rawDy > 80 &&
+      rawDy > Math.abs(rawDx)
+    ) {
+      goBackToCategories();
+      return;
+    }
     if (dx > 80 || velRef.current > 12) swipe("right");
     else if (dx < -80 || velRef.current < -12) swipe("left");
     else { setDx(0); setDy(0); }
@@ -1593,6 +1664,17 @@ export default function App() {
             )}
 
             <div className="cardstack">
+              {layer === "restaurants" && (
+                <button
+                  type="button"
+                  className="change-craving-pill"
+                  onClick={goBackToCategories}
+                  disabled={exiting}
+                >
+                  ← Change Craving
+                </button>
+              )}
+
               {/* Ghost stack */}
               {!isDone && !fetching && [2, 1].map(o => {
                 if (layer === "categories") {
@@ -1629,7 +1711,7 @@ export default function App() {
                   <div style={{ fontSize:52 }}>😅</div>
                   <div style={{ color:"#fff", fontSize:18, fontWeight:800 }}>Could not load restaurants</div>
                   <button onClick={() => activeCat && loadRestaurants(activeCat)} className="redbtn" style={{ width:"auto", padding:"12px 28px" }}>Try Again</button>
-                  <button onClick={() => { setLayer("categories"); setFetchErr(false); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", fontSize:13, cursor:"pointer" }}>Back to categories</button>
+                  <button onClick={goBackToCategories} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", fontSize:13, cursor:"pointer" }}>← Change Craving</button>
                 </div>
               )}
 
@@ -1722,8 +1804,8 @@ export default function App() {
                       : "Check your saved spots or start over."}
                   </div>
                   {layer === "restaurants" && (
-                    <button onClick={() => setLayer("categories")} className="redbtn" style={{ width:"auto", padding:"12px 28px", marginTop:4 }}>
-                      Pick Another Craving
+                    <button onClick={goBackToCategories} className="redbtn" style={{ width:"auto", padding:"12px 28px", marginTop:4 }}>
+                      ← Change Craving
                     </button>
                   )}
                   {layer === "categories" && (
@@ -1762,7 +1844,7 @@ export default function App() {
               <div style={{ color:"rgba(255,255,255,0.16)", fontSize:10, textAlign:"center", paddingBottom:6, fontWeight:600, letterSpacing:"0.05em" }}>
                 {layer === "categories"
                   ? "← skip · swipe right to find spots →"
-                  : isPremium ? "♾️ Unlimited · swipe freely" : "← pass · swipe right to save →"}
+                  : "↓ change craving · ← pass · swipe right to save →"}
               </div>
             )}
           </div>
