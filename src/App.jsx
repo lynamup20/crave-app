@@ -5,11 +5,15 @@ const CONFIG = {
   GOOGLE_PLACES_API_KEY:
     import.meta.env.VITE_GOOGLE_PLACES_API_KEY ||
     "AIzaSyDrJ-X7_ouEhdgm28iqWZaAFHqQIRw6cUQ",
-  SEARCH_RADIUS: 3200,
+  SEARCH_RADIUS: 16093, // 10 miles in meters
   RESULTS_LIMIT: 20,
 };
 
-const PLACES_API_BASE = "/maps/api";
+// Same-origin proxy (/maps/api) avoids browser CORS blocks; direct URL as fallback.
+const PLACES_API_BASES = [
+  "/maps/api",
+  "https://maps.googleapis.com/maps/api",
+];
 const PLACE_TYPE_SKIP = new Set([
   "establishment",
   "point_of_interest",
@@ -66,8 +70,9 @@ const TASTE_TAGS = [
 ];
 
 // ─── GOOGLE PLACES ────────────────────────────────────────────────────────────
-function placesApiUrl(path, params) {
-  const url = new URL(`${PLACES_API_BASE}${path}`, window.location.origin);
+function placesApiUrl(base, path, params) {
+  const origin = base.startsWith("http") ? undefined : window.location.origin;
+  const url = new URL(`${base}${path}`, origin);
   for (const [key, value] of Object.entries(params)) {
     if (value != null && value !== "") url.searchParams.set(key, String(value));
   }
@@ -75,9 +80,46 @@ function placesApiUrl(path, params) {
   return url.toString();
 }
 
+async function fetchPlacesApi(path, params) {
+  let lastError;
+  for (const base of PLACES_API_BASES) {
+    try {
+      const res = await fetch(placesApiUrl(base, path, params));
+      const data = await res.json();
+      if (!res.ok) throw new Error(`Places HTTP ${res.status}`);
+      if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+        throw new Error(data.error_message || data.status || "Places request failed");
+      }
+      return data;
+    } catch (err) {
+      lastError = err;
+      console.warn(`Places request failed (${base}):`, err.message);
+    }
+  }
+  throw lastError || new Error("Places request failed");
+}
+
+function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Geolocation not supported"));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        resolve({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        }),
+      (err) => reject(err),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    );
+  });
+}
+
 function placePhotoUrl(photoReference, maxWidth = 800) {
   if (!photoReference) return null;
-  return placesApiUrl("/place/photo", {
+  return placesApiUrl(PLACES_API_BASES[0], "/place/photo", {
     maxwidth: maxWidth,
     photo_reference: photoReference,
   });
@@ -122,7 +164,7 @@ function mapGooglePlace(place, userLat, userLng) {
         ? distanceMiles(userLat, userLng, lat, lng)
         : "—",
     address: place.vicinity || place.formatted_address || "",
-    phone: "",
+    phone: place.formatted_phone_number || "",
     reviewCount: place.user_ratings_total || 0,
     primaryPhoto: place.photos?.[0]
       ? placePhotoUrl(place.photos[0].photo_reference)
@@ -138,18 +180,13 @@ function mapGooglePlace(place, userLat, userLng) {
   };
 }
 
-async function searchGooglePlaces(lat, lng, term) {
-  const url = placesApiUrl("/place/textsearch/json", {
-    query: `${term} restaurant`,
+async function searchGooglePlacesNearby(lat, lng, term) {
+  const data = await fetchPlacesApi("/place/nearbysearch/json", {
     location: `${lat},${lng}`,
     radius: CONFIG.SEARCH_RADIUS,
+    keyword: term,
+    type: "restaurant",
   });
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Places HTTP ${res.status}`);
-  const data = await res.json();
-  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-    throw new Error(data.error_message || data.status || "Places search failed");
-  }
   return (data.results || [])
     .slice(0, CONFIG.RESULTS_LIMIT)
     .map((place) => mapGooglePlace(place, lat, lng));
@@ -157,10 +194,14 @@ async function searchGooglePlaces(lat, lng, term) {
 
 // ─── API CALLS ────────────────────────────────────────────────────────────────
 async function searchRestaurants(lat, lng, term) {
+  if (!CONFIG.GOOGLE_PLACES_API_KEY) {
+    console.warn("Missing Google Places API key, using mock data");
+    return getMockList(term);
+  }
   try {
-    return await searchGooglePlaces(lat, lng, term);
+    return await searchGooglePlacesNearby(lat, lng, term);
   } catch (err) {
-    console.warn("Google Places failed, using mock data:", err);
+    console.warn("Google Places Nearby Search failed, using mock data:", err);
     return getMockList(term);
   }
 }
@@ -1342,8 +1383,22 @@ export default function App() {
     setFetching(true); setFetchErr(false);
     setActiveCat(cat); setLayer("restaurants"); setRestIdx(0); setRestaurants([]);
     try {
-      const lat = userLoc?.lat || 38.9072;
-      const lng = userLoc?.lng || -77.0369;
+      let lat;
+      let lng;
+      try {
+        const loc = await getCurrentPosition();
+        lat = loc.lat;
+        lng = loc.lng;
+        setUserLoc(loc);
+      } catch {
+        if (userLoc?.lat != null && userLoc?.lng != null) {
+          lat = userLoc.lat;
+          lng = userLoc.lng;
+        } else {
+          setFetchErr(true);
+          return;
+        }
+      }
       const results = await searchRestaurants(lat, lng, cat.term);
       setRestaurants(results);
     } catch {
