@@ -1,0 +1,1740 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+const CONFIG = {
+  SUPABASE_YELP_PROXY_URL: "",
+  SEARCH_RADIUS: 3200,
+  RESULTS_LIMIT: 20,
+};
+
+const FREE_DAILY_SWIPES  = 15;
+const BONUS_SHARE_SWIPES = 10;
+const MONTHLY_PRICE      = 9.99;
+const DAY_NAMES          = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+// ─── DISH CATEGORIES ─────────────────────────────────────────────────────────
+const DISHES = [
+  { id:1,  name:"Spicy Ramen",       emoji:"🍜", term:"ramen",              tags:["Spicy","Umami","Comfort"],    image:"", g1:"#1a0500",g2:"#5c1200",g3:"#a02800",glow:"rgba(160,40,0,0.6)"   },
+  { id:2,  name:"Street Tacos",      emoji:"🌮", term:"tacos",              tags:["Savory","Bold","Street"],     image:"", g1:"#1a0900",g2:"#5c2800",g3:"#a04800",glow:"rgba(160,72,0,0.6)"  },
+  { id:3,  name:"Smash Burger",      emoji:"🍔", term:"burgers",            tags:["Juicy","Classic","Indulgent"],image:"", g1:"#1a1000",g2:"#5c3800",g3:"#a06000",glow:"rgba(160,96,0,0.6)"  },
+  { id:4,  name:"Sushi",             emoji:"🍣", term:"sushi",              tags:["Fresh","Premium","Delicate"], image:"", g1:"#001214",g2:"#003d44",g3:"#006b78",glow:"rgba(0,107,120,0.6)" },
+  { id:5,  name:"Wood-Fired Pizza",  emoji:"🍕", term:"pizza",              tags:["Crispy","Cheesy","Classic"],  image:"", g1:"#1a0500",g2:"#5c1500",g3:"#a02a00",glow:"rgba(160,42,0,0.6)"  },
+  { id:6,  name:"BBQ Ribs",          emoji:"🍖", term:"bbq",                tags:["Smoky","Rich","Saucy"],       image:"", g1:"#1a0000",g2:"#500000",g3:"#8b0000",glow:"rgba(139,0,0,0.6)"   },
+  { id:7,  name:"Hot Chicken",       emoji:"🍗", term:"fried chicken",      tags:["Crispy","Spicy","Comfort"],   image:"", g1:"#1a0a00",g2:"#5c2800",g3:"#a04c00",glow:"rgba(160,76,0,0.6)"  },
+  { id:8,  name:"Seafood",           emoji:"🦞", term:"seafood",            tags:["Fresh","Buttery","Ocean"],    image:"", g1:"#001018",g2:"#002a40",g3:"#004868",glow:"rgba(0,72,104,0.6)"  },
+  { id:9,  name:"Pad Thai",          emoji:"🥡", term:"thai",               tags:["Tangy","Noodles","Street"],   image:"", g1:"#1a0c00",g2:"#5c3000",g3:"#a05600",glow:"rgba(160,86,0,0.6)"  },
+  { id:10, name:"Bakery",            emoji:"🥐", term:"bakeries",           tags:["Flaky","Buttery","Morning"],  image:"", g1:"#1a1400",g2:"#5c4800",g3:"#a08000",glow:"rgba(160,128,0,0.6)" },
+  { id:11, name:"Korean BBQ",        emoji:"🫕", term:"korean bbq",         tags:["Smoky","Feast","Fun"],        image:"", g1:"#1a0000",g2:"#4a0000",g3:"#7a0808",glow:"rgba(122,8,8,0.6)"   },
+  { id:12, name:"Ice Cream",         emoji:"🍦", term:"ice cream",          tags:["Sweet","Creamy","Dessert"],   image:"", g1:"#000d1a",g2:"#002850",g3:"#004880",glow:"rgba(0,72,128,0.6)"  },
+  { id:13, name:"Birria Tacos",      emoji:"🌯", term:"birria",             tags:["Crispy","Rich","Dip"],        image:"", g1:"#2d0800",g2:"#7a2000",g3:"#c83800",glow:"rgba(200,56,0,0.6)"  },
+  { id:14, name:"Pho",               emoji:"🍲", term:"pho",                tags:["Brothy","Aromatic","Warm"],   image:"", g1:"#001a0a",g2:"#004a1e",g3:"#007838",glow:"rgba(0,120,56,0.5)"  },
+  { id:15, name:"Dim Sum",           emoji:"🥟", term:"dim sum",            tags:["Steamed","Savory","Sharing"], image:"", g1:"#1a0000",g2:"#5c1010",g3:"#a02020",glow:"rgba(160,32,32,0.6)" },
+  { id:16, name:"Acai Bowl",         emoji:"🫐", term:"acai bowls",         tags:["Fresh","Healthy","Vibrant"],  image:"", g1:"#0d0028",g2:"#2a0066",g3:"#4400a0",glow:"rgba(68,0,160,0.5)"  },
+  { id:17, name:"Chicken & Waffles", emoji:"🧇", term:"chicken and waffles",tags:["Sweet","Savory","Brunch"],    image:"", g1:"#1a1000",g2:"#5c3800",g3:"#a07000",glow:"rgba(160,112,0,0.6)" },
+  { id:18, name:"Indian Curry",      emoji:"🍛", term:"indian",             tags:["Spiced","Rich","Aromatic"],   image:"", g1:"#1a0800",g2:"#502000",g3:"#8a3c00",glow:"rgba(138,60,0,0.5)"  },
+  { id:19, name:"Shawarma",          emoji:"🥙", term:"shawarma",           tags:["Spiced","Juicy","Wrap"],      image:"", g1:"#1a0a00",g2:"#5c2a00",g3:"#a04a00",glow:"rgba(160,74,0,0.6)"  },
+  { id:20, name:"Pasta",             emoji:"🍝", term:"italian",            tags:["Comfort","Rich","Classic"],   image:"", g1:"#0a0a00",g2:"#2e2e00",g3:"#5c5c00",glow:"rgba(92,92,0,0.5)"   },
+  { id:21, name:"Donuts",            emoji:"🍩", term:"donuts",             tags:["Sweet","Glazed","Treat"],     image:"", g1:"#1a0010",g2:"#5c0038",g3:"#a00060",glow:"rgba(160,0,96,0.6)"  },
+  { id:22, name:"Brunch",            emoji:"🥞", term:"breakfast brunch",   tags:["Lazy","Eggs","Weekend"],      image:"", g1:"#1a0800",g2:"#5c2800",g3:"#a04800",glow:"rgba(160,72,0,0.6)"  },
+  { id:23, name:"Greek Food",        emoji:"🫒", term:"greek",              tags:["Fresh","Mediterranean","Light"],image:"",g1:"#001a10",g2:"#004a2c",g3:"#007848",glow:"rgba(0,120,72,0.5)"  },
+  { id:24, name:"Boba Tea",          emoji:"🧋", term:"bubble tea",         tags:["Sweet","Chewy","Drinks"],     image:"", g1:"#100028",g2:"#300066",g3:"#5000a0",glow:"rgba(80,0,160,0.5)"  },
+  { id:25, name:"Cheesesteak",       emoji:"🥖", term:"cheesesteak",        tags:["Cheesy","Juicy","Classic"],   image:"", g1:"#1a1000",g2:"#5c3800",g3:"#a06200",glow:"rgba(160,98,0,0.6)"  },
+  { id:26, name:"Wings",             emoji:"🍗", term:"chicken wings",      tags:["Crispy","Saucy","Game Day"],  image:"", g1:"#1a0500",g2:"#5c1800",g3:"#a03000",glow:"rgba(160,48,0,0.6)"  },
+  { id:27, name:"Burritos",          emoji:"🌯", term:"burritos",           tags:["Stuffed","Bold","Filling"],   image:"", g1:"#1a0800",g2:"#5c2400",g3:"#a04000",glow:"rgba(160,64,0,0.6)"  },
+  { id:28, name:"Steak",             emoji:"🥩", term:"steakhouses",        tags:["Premium","Rich","Seared"],    image:"", g1:"#1a0000",g2:"#500000",g3:"#8b0000",glow:"rgba(139,0,0,0.6)"   },
+  { id:29, name:"Sandwiches",        emoji:"🥪", term:"sandwiches",         tags:["Simple","Fresh","Quick"],     image:"", g1:"#0a1400",g2:"#283c00",g3:"#486400",glow:"rgba(72,100,0,0.5)"  },
+  { id:30, name:"Desserts",          emoji:"🍰", term:"desserts",           tags:["Sweet","Indulgent","Happy"],  image:"", g1:"#1a0014",g2:"#5c0040",g3:"#a00070",glow:"rgba(160,0,112,0.6)" },
+];
+
+const TASTE_TAGS = [
+  "Spicy 🌶️","Savory 🥩","Sweet 🍯","Fresh 🥗",
+  "Comfort 🍲","Premium ✨","Quick 🏃","Vegan 🌱","Seafood 🦞","Noodles 🍜",
+];
+
+// ─── API CALLS ────────────────────────────────────────────────────────────────
+async function searchRestaurants(lat, lng, term) {
+  if (!CONFIG.SUPABASE_YELP_PROXY_URL) {
+    return getMockList(term);
+  }
+  const res = await fetch(CONFIG.SUPABASE_YELP_PROXY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lat, lng, term, radius_meters: CONFIG.SEARCH_RADIUS, limit: CONFIG.RESULTS_LIMIT }),
+  });
+  if (!res.ok) throw new Error("Search failed");
+  return (await res.json()).restaurants || [];
+}
+
+async function fetchDetail(businessId, restaurant) {
+  if (!CONFIG.SUPABASE_YELP_PROXY_URL) {
+    return getMockDetail(businessId, restaurant);
+  }
+  const res = await fetch(CONFIG.SUPABASE_YELP_PROXY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ business_id: businessId }),
+  });
+  if (!res.ok) throw new Error("Detail failed");
+  return (await res.json()).detail;
+}
+
+// ─── MOCK DATA ────────────────────────────────────────────────────────────────
+function getMockList(term) {
+  const base = {
+    distanceMiles: "0.4", reviewCount: 2847,
+    primaryPhoto: null, isOpenNow: true,
+    deliversYelp: true, doesPickup: true,
+    website: null, orderUrl: null, isPartner: false,
+  };
+  const all = {
+    ramen: [
+      { ...base, id:"r1", name:"Toki Underground",  cuisine:"Ramen",    rating:"4.9", price:"$$",  distanceMiles:"0.4", address:"1234 H St NE, Washington, DC",    phone:"(202) 388-0100", reviewCount:2847 },
+      { ...base, id:"r2", name:"Daikaya Ramen",     cuisine:"Japanese", rating:"4.7", price:"$$",  distanceMiles:"0.9", address:"705 6th St NW, Washington, DC",   phone:"(202) 589-1600", reviewCount:1923, isPartner:true, orderUrl:"https://doordash.com", website:"https://daikaya.com" },
+      { ...base, id:"r3", name:"Menya Hosaki",      cuisine:"Ramen",    rating:"4.8", price:"$$",  distanceMiles:"1.8", address:"1129 5th St NW, Washington, DC",  phone:"(202) 844-8490", reviewCount:987,  isOpenNow:false },
+    ],
+    tacos: [
+      { ...base, id:"t1", name:"Taco Bamba",        cuisine:"Mexican",  rating:"4.8", price:"$",   distanceMiles:"0.8", address:"7511 Leesburg Pike, Falls Church", phone:"(703) 639-0100", reviewCount:2341 },
+      { ...base, id:"t2", name:"Oyamel",            cuisine:"Mexican",  rating:"4.6", price:"$$$", distanceMiles:"0.6", address:"401 7th St NW, Washington, DC",   phone:"(202) 628-1005", reviewCount:3891, isOpenNow:false },
+    ],
+    burgers: [
+      { ...base, id:"b1", name:"Good Stuff Eatery", cuisine:"American", rating:"4.7", price:"$",   distanceMiles:"0.3", address:"303 Pennsylvania Ave SE, DC",     phone:"(202) 543-8222", reviewCount:4521 },
+      { ...base, id:"b2", name:"Shake Shack",       cuisine:"Burgers",  rating:"4.5", price:"$$",  distanceMiles:"0.7", address:"1216 18th St NW, DC",             phone:"(202) 683-9922", reviewCount:3210 },
+    ],
+  };
+  return new Promise(r => setTimeout(() => r(all[term] || all.ramen), 900));
+}
+
+function getMockDetail(id, restaurant) {
+  // Use the real restaurant data as the base — only add supplemental fields
+  const r = restaurant || {};
+  return new Promise(resolve => setTimeout(() => resolve({
+    id,
+    // ── Use actual restaurant fields so Shake Shack shows Shake Shack etc ──
+    name:          r.name          || "Restaurant",
+    cuisine:       r.cuisine       || "Restaurant",
+    allCategories: [r.cuisine      || "Restaurant"],
+    rating:        r.rating        || "4.5",
+    reviewCount:   r.reviewCount   || 0,
+    price:         r.price         || "$$",
+    phone:         r.phone         || "",
+    phoneRaw:      (r.phone        || "").replace(/\D/g, ""),
+    address:       r.address       || "",
+    lat:           r.lat           || 38.9005,
+    lng:           r.lng           || -77.0004,
+    photos:        r.primaryPhoto  ? [r.primaryPhoto] : [null],
+    primaryPhoto:  r.primaryPhoto  || null,
+    yelpUrl:       r.yelpUrl       || "https://yelp.com",
+    website:       r.website       || null,
+    orderUrl:      r.orderUrl      || null,
+    isPartner:     r.isPartner     || false,
+    deliversYelp:  r.deliversYelp  || false,
+    doesPickup:    r.doesPickup    || false,
+    doesReservations: false,
+    isOpenNow:     r.isOpenNow     !== undefined ? r.isOpenNow : true,
+    // ── Supplemental data — in production comes from Yelp Business Details ──
+    hours: [
+      { day:0, start:"1100", end:"2200" },
+      { day:1, start:"1100", end:"2200" },
+      { day:2, start:"1100", end:"2200" },
+      { day:3, start:"1100", end:"2200" },
+      { day:4, start:"1100", end:"2300" },
+      { day:5, start:"1000", end:"2300" },
+      { day:6, start:"1000", end:"2200" },
+    ],
+    reviews: [
+      { id:"rv1", rating:5, text:`${r.name || "This place"} is absolutely incredible. One of my favorite spots in the city.`, author:"Alex M.", date:"2024-11-15" },
+      { id:"rv2", rating:4, text:"Great food and solid service. Will definitely be coming back again soon.", author:"Jordan K.", date:"2024-11-02" },
+      { id:"rv3", rating:5, text:"Worth every penny. The quality here is consistently top notch.", author:"Taylor L.", date:"2024-10-28" },
+    ],
+  }), 700));
+}
+
+// ─── UTILITIES ────────────────────────────────────────────────────────────────
+function fmtHour(h) {
+  if (!h) return "";
+  const n  = parseInt(h.slice(0,2), 10);
+  const mm = h.slice(2);
+  const suffix = n >= 12 ? "pm" : "am";
+  const hr = n > 12 ? n - 12 : n === 0 ? 12 : n;
+  return `${hr}${mm === "00" ? "" : ":" + mm}${suffix}`;
+}
+
+// ─── GLOBAL STYLES ────────────────────────────────────────────────────────────
+const CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&display=swap');
+  *, *::before, *::after {
+    box-sizing: border-box; margin: 0; padding: 0;
+    -webkit-tap-highlight-color: transparent;
+    font-family: 'Montserrat', system-ui, sans-serif;
+  }
+  body { background: #0A0A0A; }
+  ::-webkit-scrollbar { width: 3px; height: 3px; }
+  ::-webkit-scrollbar-thumb { background: rgba(232,0,10,0.4); border-radius: 3px; }
+
+  .phone {
+    width: min(390px, 100vw);
+    height: min(844px, 100svh);
+    background: #111;
+    border-radius: clamp(0px, 4vw, 48px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    box-shadow: 0 40px 100px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.06);
+  }
+  .tabbody {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 10px 18px 0;
+    position: relative;
+    min-height: 0;
+  }
+  .cardstack {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+  }
+  .swipecard {
+    position: absolute;
+    inset: 0;
+    border-radius: 26px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+    will-change: transform;
+  }
+  .swipecard.leaving {
+    transition: transform 0.42s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.42s ease;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .chip {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.8);
+    font-weight: 700;
+  }
+  .redbtn {
+    background: linear-gradient(135deg, #E8000A, #FF3322);
+    border: none;
+    border-radius: 18px;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(232,0,10,0.4);
+    transition: transform 0.15s;
+    width: 100%;
+    padding: 15px 0;
+  }
+  .redbtn:hover { transform: scale(1.02); }
+  .redbtn:active { transform: scale(0.97); }
+  .ghostbtn {
+    width: 100%;
+    padding: 14px 0;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 18px;
+    color: rgba(255,255,255,0.6);
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .toast {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 20px;
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: 800;
+    color: #fff;
+    z-index: 100;
+    white-space: nowrap;
+    animation: bpop 0.35s ease, bfade 0.4s ease 1.4s forwards;
+  }
+  .toast-r { background: linear-gradient(135deg,#E8000A,#FF3322); box-shadow: 0 4px 20px rgba(232,0,10,0.5); }
+  .toast-d { background: rgba(35,35,40,0.96); border: 1px solid rgba(255,255,255,0.1); }
+
+  .likedcard {
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: transform 0.18s, box-shadow 0.18s;
+  }
+  .likedcard:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .likedcard:active { transform: scale(0.99); }
+
+  .actionbtn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    background: none;
+    border: none;
+    flex: 1;
+  }
+  .actionicon {
+    width: 48px;
+    height: 48px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    transition: transform 0.15s;
+  }
+  .actionicon:hover { transform: scale(1.1); }
+  .actionicon:active { transform: scale(0.9); }
+  .actionlabel {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+  .detailrow {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 11px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .detailrow:last-child { border-bottom: none; }
+
+  @keyframes bpop    { from { transform: translateX(-50%) scale(0.7); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
+  @keyframes bfade   { to   { opacity: 0; transform: translateX(-50%) translateY(-6px); } }
+  @keyframes pulse   { 0%,100% { box-shadow: 0 0 0 0 rgba(79,195,247,0.4); } 50% { box-shadow: 0 0 0 10px rgba(79,195,247,0); } }
+  @keyframes fadeUp  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  @keyframes spin    { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  @keyframes floaty  { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  @keyframes ripple  { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(2.5); opacity: 0; } }
+`;
+
+// ─── CARD VISUALS ─────────────────────────────────────────────────────────────
+function DishCard({ dish, dim }) {
+  const [loaded, setLoaded] = useState(false);
+  const [imgErr, setImgErr] = useState(false);
+  const showImg = dish.image && !imgErr;
+
+  return (
+    <div style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", background:`radial-gradient(ellipse at 35% 25%, ${dish.g2} 0%, ${dish.g1} 65%)` }}>
+      {showImg && (
+        <img
+          src={dish.image} alt={dish.name} draggable={false}
+          onLoad={() => setLoaded(true)} onError={() => setImgErr(true)}
+          style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity: loaded ? 1 : 0, transition:"opacity 0.4s", pointerEvents:"none" }}
+        />
+      )}
+      {(!showImg || !loaded) && (
+        <>
+          <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-65%)", width:230, height:230, borderRadius:"50%", background:`radial-gradient(circle, ${dish.glow} 0%, transparent 70%)`, filter:"blur(32px)" }} />
+          <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-72%)", fontSize:118, lineHeight:1, userSelect:"none", pointerEvents:"none", filter:"drop-shadow(0 8px 32px rgba(0,0,0,0.5))", animation:"floaty 3s ease-in-out infinite" }}>
+            {dish.emoji}
+          </div>
+        </>
+      )}
+      <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.05) 0%, transparent 38%, transparent 44%, rgba(0,0,0,0.96) 100%)" }} />
+      <div style={{ position:"absolute", inset:0, borderRadius:26, border:"1px solid rgba(255,255,255,0.08)", pointerEvents:"none" }} />
+      {dim && <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.58)", borderRadius:26 }} />}
+    </div>
+  );
+}
+
+function RestCard({ restaurant, category, dim }) {
+  const [loaded, setLoaded] = useState(false);
+  const [imgErr, setImgErr] = useState(false);
+  const showPhoto = restaurant.primaryPhoto && !imgErr;
+
+  return (
+    <div style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", background:`radial-gradient(ellipse at 35% 25%, ${category.g2} 0%, ${category.g1} 65%)` }}>
+      {showPhoto && (
+        <img
+          src={restaurant.primaryPhoto} alt={restaurant.name} draggable={false}
+          onLoad={() => setLoaded(true)} onError={() => setImgErr(true)}
+          style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity: loaded ? 1 : 0, transition:"opacity 0.4s", pointerEvents:"none" }}
+        />
+      )}
+      {(!showPhoto || !loaded) && (
+        <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-65%)", fontSize:108, lineHeight:1, userSelect:"none", pointerEvents:"none", filter:"drop-shadow(0 8px 24px rgba(0,0,0,0.5))" }}>
+          {category.emoji}
+        </div>
+      )}
+      <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.05) 0%, transparent 38%, transparent 44%, rgba(0,0,0,0.97) 100%)" }} />
+      {restaurant.isOpenNow !== null && restaurant.isOpenNow !== undefined && (
+        <div style={{ position:"absolute", top:18, left:18, background: restaurant.isOpenNow ? "rgba(76,175,80,0.9)" : "rgba(244,67,54,0.85)", backdropFilter:"blur(8px)", borderRadius:20, padding:"4px 12px", fontSize:11, fontWeight:800, color:"#fff" }}>
+          {restaurant.isOpenNow ? "🟢 Open Now" : "🔴 Closed"}
+        </div>
+      )}
+      <div style={{ position:"absolute", top:18, right:18, background:"rgba(0,0,0,0.55)", backdropFilter:"blur(8px)", borderRadius:20, padding:"4px 12px", fontSize:11, fontWeight:700, color:"rgba(255,255,255,0.85)", border:"1px solid rgba(255,255,255,0.12)" }}>
+        {category.emoji} {category.name}
+      </div>
+      <div style={{ position:"absolute", inset:0, borderRadius:26, border:"1px solid rgba(255,255,255,0.08)", pointerEvents:"none" }} />
+      {dim && <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.58)", borderRadius:26 }} />}
+    </div>
+  );
+}
+
+// ─── SPLASH ───────────────────────────────────────────────────────────────────
+function Splash({ onDone }) {
+  const [phase, setPhase] = useState("in");
+
+  useEffect(() => {
+    const t1 = setTimeout(() => setPhase("hold"), 400);
+    const t2 = setTimeout(() => setPhase("out"),  2000);
+    const t3 = setTimeout(() => onDone(),          2550);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, []);
+
+  return (
+    <div style={{
+      position:"absolute", inset:0, zIndex:999,
+      background:"linear-gradient(160deg, #E8000A 0%, #C8000A 40%, #A00008 100%)",
+      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      opacity: phase === "out" ? 0 : 1,
+      transform: phase === "out" ? "scale(1.04)" : "scale(1)",
+      transition: phase === "out" ? "opacity 0.5s ease, transform 0.5s ease" : "none",
+    }}>
+      <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", width:280, height:280, borderRadius:"50%", background:"radial-gradient(circle,rgba(255,255,255,0.12) 0%,transparent 70%)" }} />
+      <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", width:230, height:230, borderRadius:"50%", border:"1px solid rgba(255,255,255,0.1)" }} />
+      <div style={{
+        fontSize:72, marginBottom:14, filter:"drop-shadow(0 6px 24px rgba(0,0,0,0.4))",
+        opacity: phase === "in" ? 0 : 1,
+        transform: phase === "in" ? "scale(0.6) translateY(10px)" : "scale(1) translateY(0)",
+        transition:"opacity 0.5s ease 0.15s, transform 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.15s",
+      }}>🔥</div>
+      <div style={{
+        fontSize:52, fontWeight:900, color:"#fff", letterSpacing:"-2px",
+        textShadow:"0 4px 24px rgba(0,0,0,0.3)",
+        opacity: phase === "in" ? 0 : 1,
+        transform: phase === "in" ? "translateY(12px)" : "translateY(0)",
+        transition:"opacity 0.45s ease 0.2s, transform 0.45s ease 0.2s",
+      }}>
+        crave<span style={{ color:"rgba(255,255,255,0.7)" }}>.</span>
+      </div>
+      <div style={{
+        color:"rgba(255,255,255,0.65)", fontSize:13, fontWeight:600,
+        letterSpacing:"0.12em", textTransform:"uppercase", marginTop:12,
+        opacity: phase === "in" ? 0 : 1, transition:"opacity 0.45s ease 0.4s",
+      }}>
+        swipe. crave. eat.
+      </div>
+      <div style={{ position:"absolute", bottom:52, left:"50%", transform:"translateX(-50%)", width:48, height:3, borderRadius:3, background:"rgba(255,255,255,0.2)", overflow:"hidden" }}>
+        <div style={{ height:"100%", borderRadius:3, background:"rgba(255,255,255,0.8)", width: phase === "in" ? "0%" : "100%", transition: phase === "in" ? "none" : "width 1.5s ease 0.3s" }} />
+      </div>
+    </div>
+  );
+}
+
+// ─── ONBOARDING ───────────────────────────────────────────────────────────────
+function Onboard({ step, setStep, tasteTags, setTasteTags, onDone, onLocationGranted }) {
+  const [locStatus, setLocStatus] = useState("idle");
+
+  const requestLocation = () => {
+    setLocStatus("requesting");
+    if (!navigator.geolocation) { setLocStatus("denied"); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        onLocationGranted({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocStatus("granted");
+        setTimeout(() => onDone(), 1200);
+      },
+      () => setLocStatus("denied"),
+      { timeout: 10000, maximumAge: 300000 }
+    );
+  };
+
+  const steps = [
+    { emoji:"🔥", title:"Find food you'll actually crave", sub:`${FREE_DAILY_SWIPES} free swipes per day. Share to earn more. Premium unlocks AI recipes and 1-tap ordering.`, cta:"Let's Go" },
+    { emoji:"🎯", title:"Build your flavor profile", sub:"Pick your vibe. We show you the best matches near you first.", tags:true, cta:"Looks Good" },
+    { emoji:"👑", title:"Unlock the full experience", sub:"Premium = unlimited swipes, AI recipes, and 1-tap ordering.", premium:true, cta:"Maybe Later" },
+    { emoji:"📍", title:"Find restaurants near you", sub:"Crave uses your location to show real restaurants within miles of you right now.", location:true },
+  ];
+
+  const s = steps[step];
+  const isLast = step === steps.length - 1;
+
+  return (
+    <div className="phone" style={{ justifyContent:"space-between", padding:"52px 28px 48px", background:"#111" }}>
+      {/* Progress dots */}
+      <div style={{ display:"flex", gap:6, justifyContent:"center" }}>
+        {steps.map((_, i) => (
+          <div key={i} style={{ width: i === step ? 24 : 6, height:6, borderRadius:3, background: i === step ? "#E8000A" : "rgba(255,255,255,0.15)", transition:"all 0.3s" }} />
+        ))}
+      </div>
+
+      {/* Body */}
+      <div style={{ textAlign:"center" }}>
+        <div style={{ fontSize:72, marginBottom:18, animation:"floaty 3s ease-in-out infinite" }}>{s.emoji}</div>
+        {step === 0 && (
+          <div style={{ fontSize:34, fontWeight:900, color:"#fff", letterSpacing:"-1px", marginBottom:14 }}>
+            crave<span style={{ color:"#E8000A" }}>.</span>
+          </div>
+        )}
+        <div style={{ color:"#fff", fontSize:21, fontWeight:900, lineHeight:1.3, marginBottom:10 }}>{s.title}</div>
+        <div style={{ color:"rgba(255,255,255,0.5)", fontSize:14, lineHeight:1.7 }}>{s.sub}</div>
+
+        {/* Taste tags */}
+        {s.tags && (
+          <div style={{ display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center", marginTop:22 }}>
+            {TASTE_TAGS.map(tag => (
+              <div key={tag}
+                onClick={() => setTasteTags(p => p.includes(tag) ? p.filter(t => t !== tag) : [...p, tag])}
+                style={{
+                  padding:"9px 16px", borderRadius:22, cursor:"pointer", fontSize:13, fontWeight:700, transition:"all 0.2s",
+                  background: tasteTags.includes(tag) ? "linear-gradient(135deg,#E8000A,#FF3322)" : "rgba(255,255,255,0.07)",
+                  color: tasteTags.includes(tag) ? "#fff" : "rgba(255,255,255,0.55)",
+                  border: `1px solid ${tasteTags.includes(tag) ? "transparent" : "rgba(255,255,255,0.1)"}`,
+                }}>
+                {tag}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Premium preview */}
+        {s.premium && (
+          <div style={{ marginTop:20, background:"rgba(232,0,10,0.1)", border:"1px solid rgba(232,0,10,0.25)", borderRadius:16, padding:"14px 16px", textAlign:"left" }}>
+            {["♾️ Unlimited swipes", "👨‍🍳 AI recipes with ingredient lists", "🛵 1-tap ordering via DoorDash and Uber Eats", "📍 Real-time restaurant discovery"].map(f => (
+              <div key={f} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                <div style={{ width:5, height:5, borderRadius:"50%", background:"#E8000A", flexShrink:0 }} />
+                <span style={{ color:"rgba(255,255,255,0.75)", fontSize:13, fontWeight:600 }}>{f}</span>
+              </div>
+            ))}
+            <div style={{ marginTop:10, padding:"8px 0", background:"rgba(255,215,0,0.1)", borderRadius:10, textAlign:"center", border:"1px solid rgba(255,215,0,0.2)" }}>
+              <span style={{ color:"#FFD700", fontSize:13, fontWeight:800 }}>👑 ${MONTHLY_PRICE}/month · cancel anytime</span>
+            </div>
+          </div>
+        )}
+
+        {/* Location step */}
+        {s.location && (
+          <div style={{ marginTop:24 }}>
+            {locStatus === "idle" && (
+              <>
+                <div style={{ position:"relative", width:80, height:80, margin:"0 auto 16px" }}>
+                  <div style={{ position:"absolute", inset:0, borderRadius:"50%", background:"rgba(232,0,10,0.2)", animation:"ripple 2s ease-out infinite" }} />
+                  <div style={{ position:"absolute", inset:8, borderRadius:"50%", background:"rgba(232,0,10,0.3)", animation:"ripple 2s ease-out 0.5s infinite" }} />
+                  <div style={{ position:"absolute", inset:16, borderRadius:"50%", background:"linear-gradient(135deg,#E8000A,#FF3322)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24 }}>📍</div>
+                </div>
+                <div style={{ background:"rgba(255,255,255,0.05)", borderRadius:14, padding:"12px 14px", textAlign:"left", border:"1px solid rgba(255,255,255,0.07)" }}>
+                  {[
+                    { icon:"📏", text:"Show exact distance to each restaurant" },
+                    { icon:"🗺️", text:"Find spots within walking distance" },
+                    { icon:"🔄", text:"Update results as you move around" },
+                  ].map(r => (
+                    <div key={r.text} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:7 }}>
+                      <span style={{ fontSize:15, flexShrink:0 }}>{r.icon}</span>
+                      <span style={{ color:"rgba(255,255,255,0.65)", fontSize:12, fontWeight:600 }}>{r.text}</span>
+                    </div>
+                  ))}
+                  <div style={{ color:"rgba(255,255,255,0.25)", fontSize:11, marginTop:4 }}>Your location is never stored or shared.</div>
+                </div>
+              </>
+            )}
+            {locStatus === "granted" && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10, padding:"16px 0" }}>
+                <div style={{ width:60, height:60, borderRadius:"50%", background:"linear-gradient(135deg,#4CAF50,#66BB6A)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, boxShadow:"0 6px 20px rgba(76,175,80,0.4)" }}>✓</div>
+                <div style={{ color:"#4CAF50", fontSize:16, fontWeight:800 }}>Location Enabled!</div>
+                <div style={{ color:"rgba(255,255,255,0.4)", fontSize:13 }}>Finding restaurants near you...</div>
+              </div>
+            )}
+            {locStatus === "denied" && (
+              <div style={{ background:"rgba(255,152,0,0.12)", border:"1px solid rgba(255,152,0,0.3)", borderRadius:14, padding:"12px 14px" }}>
+                <div style={{ color:"#FFA726", fontSize:13, fontWeight:800, marginBottom:6 }}>Location not available</div>
+                <div style={{ color:"rgba(255,255,255,0.5)", fontSize:12, lineHeight:1.6 }}>No problem — we will use a default city to find restaurants near you.</div>
+              </div>
+            )}
+            {locStatus === "requesting" && (
+              <div style={{ padding:"20px 0", textAlign:"center", color:"rgba(255,255,255,0.5)", fontSize:14, fontWeight:700 }}>
+                <span style={{ display:"inline-block", animation:"spin 1s linear infinite", marginRight:8 }}>⏳</span>
+                Waiting for permission...
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Buttons */}
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+        {s.location ? (
+          <>
+            {locStatus === "idle" && (
+              <>
+                <button onClick={requestLocation} className="redbtn">📍 Enable Location</button>
+                <button onClick={onDone} className="ghostbtn">Skip for Now</button>
+              </>
+            )}
+            {locStatus === "denied" && (
+              <button onClick={onDone} className="redbtn">Continue Without Location</button>
+            )}
+          </>
+        ) : s.premium ? (
+          <>
+            <button onClick={() => setStep(s => s + 1)} className="redbtn">👑 Try Premium Free for 7 Days</button>
+            <button onClick={() => setStep(s => s + 1)} className="ghostbtn">{s.cta}</button>
+          </>
+        ) : (
+          <button onClick={() => isLast ? onDone() : setStep(s => s + 1)} className="redbtn">{s.cta}</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── RESTAURANT DETAIL MODAL ──────────────────────────────────────────────────
+function DetailModal({ restaurant, category, isPremium, onClose, onRecipe }) {
+  const [detail,      setDetail]      = useState(null);
+  const [loading,     setLoading]     = useState(true);
+  const [activePhoto, setActivePhoto] = useState(0);
+  const [showHours,   setShowHours]   = useState(false);
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [imgErrs,     setImgErrs]     = useState({});
+
+  useEffect(() => {
+    fetchDetail(restaurant.id, restaurant)
+      .then(d => { setDetail(d); setLoading(false); })
+      .catch(() => { setLoading(false); });
+  }, [restaurant.id]);
+
+  const d          = detail || restaurant;
+  const photos     = (detail?.photos?.length ? detail.photos : [restaurant.primaryPhoto]).filter(Boolean);
+  const isPartner  = d.isPartner || restaurant.isPartner;
+  const orderUrl   = d.orderUrl  || restaurant.orderUrl;
+  const website    = d.website   || restaurant.website;
+  const hasPhoto   = photos.length > 0 && !imgErrs[activePhoto];
+
+  const handleOrder = () => {
+    if (isPartner && orderUrl) {
+      window.open(orderUrl, "_blank");
+    } else {
+      setShowTooltip(true);
+      setTimeout(() => setShowTooltip(false), 3200);
+    }
+  };
+
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.88)", zIndex:300, display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width:"100%", maxWidth:390, background:"#131313", borderRadius:"26px 26px 0 0", maxHeight:"92vh", display:"flex", flexDirection:"column", border:"1px solid rgba(255,255,255,0.08)", animation:"slideUp 0.3s ease", overflow:"hidden" }}>
+
+        {/* Photo hero */}
+        <div style={{ position:"relative", height:220, flexShrink:0, background: category ? `radial-gradient(circle at 40% 50%, ${category.g2}, ${category.g1})` : "#1a1a1a" }}>
+          {hasPhoto && (
+            <img src={photos[activePhoto]} alt={d.name}
+              onError={() => setImgErrs(p => ({ ...p, [activePhoto]: true }))}
+              style={{ width:"100%", height:"100%", objectFit:"cover", position:"absolute", inset:0 }}
+            />
+          )}
+          {!hasPhoto && (
+            <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-60%)", fontSize:80 }}>
+              {category?.emoji || "🍽️"}
+            </div>
+          )}
+          <div style={{ position:"absolute", inset:0, background:"linear-gradient(to top, rgba(19,19,19,1) 0%, rgba(0,0,0,0.25) 55%, transparent 100%)" }} />
+
+          {/* Back */}
+          <button onClick={onClose} style={{ position:"absolute", top:14, left:14, width:34, height:34, borderRadius:"50%", background:"rgba(0,0,0,0.6)", backdropFilter:"blur(8px)", border:"1px solid rgba(255,255,255,0.15)", color:"#fff", fontSize:18, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            ←
+          </button>
+
+          {/* Photo dots */}
+          {photos.length > 1 && (
+            <div style={{ position:"absolute", bottom:70, left:"50%", transform:"translateX(-50%)", display:"flex", gap:5 }}>
+              {photos.map((_, i) => (
+                <div key={i} onClick={e => { e.stopPropagation(); setActivePhoto(i); }}
+                  style={{ width: i === activePhoto ? 20 : 6, height:6, borderRadius:3, background: i === activePhoto ? "#fff" : "rgba(255,255,255,0.4)", cursor:"pointer", transition:"all 0.2s" }}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Thumbnails */}
+          {photos.length > 1 && (
+            <div style={{ position:"absolute", bottom:12, left:14, right:14, display:"flex", gap:6 }}>
+              {photos.slice(0, 4).map((p, i) => (
+                <div key={i} onClick={e => { e.stopPropagation(); setActivePhoto(i); }}
+                  style={{ width:52, height:40, borderRadius:8, overflow:"hidden", border:`2px solid ${i === activePhoto ? "#E8000A" : "rgba(255,255,255,0.2)"}`, cursor:"pointer", flexShrink:0, background: category ? `radial-gradient(${category.g2},${category.g1})` : "#222" }}>
+                  {p && !imgErrs[i] && <img src={p} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} onError={() => setImgErrs(pr => ({ ...pr, [i]: true }))} />}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Scrollable content */}
+        <div style={{ flex:1, overflowY:"auto", minHeight:0 }}>
+
+          {/* Name + rating */}
+          <div style={{ padding:"16px 20px 0" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div style={{ flex:1, minWidth:0, marginRight:12 }}>
+                <div style={{ color:"#fff", fontSize:22, fontWeight:900, letterSpacing:"-0.5px", lineHeight:1.15 }}>{d.name}</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginTop:6 }}>
+                  {(detail?.allCategories || [d.cuisine]).map(c => (
+                    <span key={c} style={{ background:"rgba(232,0,10,0.15)", color:"#FF6060", borderRadius:10, padding:"2px 9px", fontSize:11, fontWeight:700 }}>{c}</span>
+                  ))}
+                </div>
+              </div>
+              <div style={{ background:"rgba(255,211,56,0.1)", border:"1px solid rgba(255,211,56,0.2)", borderRadius:12, padding:"8px 12px", textAlign:"center", flexShrink:0 }}>
+                <div style={{ color:"#FFD338", fontSize:18, fontWeight:900 }}>{d.rating}</div>
+                <div style={{ color:"rgba(255,255,255,0.35)", fontSize:9, marginTop:3, fontWeight:600 }}>{(d.reviewCount || 0).toLocaleString()} reviews</div>
+              </div>
+            </div>
+
+            {/* 3 quick stat boxes */}
+            <div style={{ display:"flex", gap:8, marginTop:14 }}>
+              {[
+                { icon:"📏", label:`${restaurant.distanceMiles} mi`, sub:"Distance" },
+                { icon: d.isOpenNow ? "🟢" : "🔴", label: d.isOpenNow ? "Open Now" : "Closed", sub:"Status" },
+                { icon:"💰", label: d.price || "$$", sub:"Price Range" },
+              ].map(stat => (
+                <div key={stat.sub} style={{ flex:1, background:"rgba(255,255,255,0.05)", borderRadius:12, padding:"10px 8px", textAlign:"center", border:"1px solid rgba(255,255,255,0.06)" }}>
+                  <div style={{ fontSize:18 }}>{stat.icon}</div>
+                  <div style={{ color:"#fff", fontSize:12, fontWeight:800, marginTop:4 }}>{stat.label}</div>
+                  <div style={{ color:"rgba(255,255,255,0.35)", fontSize:9, marginTop:1 }}>{stat.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Delivery badges */}
+            {(d.deliversYelp || d.doesPickup || d.doesReservations) && (
+              <div style={{ display:"flex", gap:7, marginTop:10, flexWrap:"wrap" }}>
+                {d.deliversYelp     && <span style={{ background:"rgba(6,193,103,0.15)",  color:"#06C167", border:"1px solid rgba(6,193,103,0.3)",  borderRadius:10, padding:"4px 10px", fontSize:11, fontWeight:700 }}>🛵 Delivery</span>}
+                {d.doesPickup       && <span style={{ background:"rgba(100,181,246,0.15)", color:"#64B5F6", border:"1px solid rgba(100,181,246,0.3)", borderRadius:10, padding:"4px 10px", fontSize:11, fontWeight:700 }}>🥡 Pickup</span>}
+                {d.doesReservations && <span style={{ background:"rgba(255,215,0,0.15)",  color:"#FFD700", border:"1px solid rgba(255,215,0,0.3)",  borderRadius:10, padding:"4px 10px", fontSize:11, fontWeight:700 }}>📅 Reservations</span>}
+              </div>
+            )}
+          </div>
+
+          {/* Action buttons */}
+          <div style={{ padding:"16px 20px", display:"flex", gap:8, borderBottom:"1px solid rgba(255,255,255,0.06)" }}>
+
+            {/* Directions */}
+            <button className="actionbtn" onClick={() => window.open(`https://maps.google.com/?q=${d.lat},${d.lng}`, "_blank")}>
+              <div className="actionicon" style={{ background:"rgba(79,195,247,0.15)", border:"1px solid rgba(79,195,247,0.25)" }}>📍</div>
+              <span className="actionlabel" style={{ color:"#4FC3F7" }}>Directions</span>
+            </button>
+
+            {/* Call */}
+            {d.phoneRaw && (
+              <button className="actionbtn" onClick={() => window.open(`tel:${d.phoneRaw}`, "_blank")}>
+                <div className="actionicon" style={{ background:"rgba(76,175,80,0.15)", border:"1px solid rgba(76,175,80,0.25)" }}>📞</div>
+                <span className="actionlabel" style={{ color:"#81C784" }}>Call</span>
+              </button>
+            )}
+
+            {/* Website */}
+            <button className="actionbtn" onClick={() => website && window.open(website, "_blank")} style={{ opacity: website ? 1 : 0.5 }}>
+              <div className="actionicon" style={{ background:"rgba(255,167,38,0.15)", border:"1px solid rgba(255,167,38,0.25)" }}>🌐</div>
+              <span className="actionlabel" style={{ color: website ? "#FFA726" : "rgba(255,255,255,0.3)" }}>{website ? "Website" : "No Site"}</span>
+            </button>
+
+            {/* Order — grey if not partner */}
+            <div style={{ flex:1, position:"relative" }}>
+              <button className="actionbtn" onClick={handleOrder} style={{ width:"100%" }}>
+                <div className="actionicon" style={{
+                  background: isPartner && orderUrl ? "linear-gradient(135deg,#E8000A,#FF3322)" : "rgba(255,255,255,0.06)",
+                  border: `1px solid ${isPartner && orderUrl ? "rgba(232,0,10,0.5)" : "rgba(255,255,255,0.12)"}`,
+                }}>🛵</div>
+                <span className="actionlabel" style={{ color: isPartner && orderUrl ? "#FF6060" : "rgba(255,255,255,0.3)" }}>
+                  {isPartner && orderUrl ? "Order" : "Order"}
+                </span>
+              </button>
+
+              {/* Tooltip */}
+              {showTooltip && (
+                <div style={{ position:"absolute", bottom:62, left:"50%", transform:"translateX(-50%)", background:"rgba(25,25,25,0.98)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:14, padding:"12px 14px", width:210, textAlign:"center", zIndex:10, animation:"fadeUp 0.2s ease", boxShadow:"0 8px 24px rgba(0,0,0,0.6)" }}>
+                  <div style={{ color:"rgba(255,255,255,0.55)", fontSize:11, lineHeight:1.6, marginBottom: website ? 8 : 0 }}>
+                    This restaurant has not joined Crave for direct ordering yet.
+                  </div>
+                  {website && (
+                    <button onClick={() => window.open(website, "_blank")} style={{ padding:"6px 14px", background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:8, color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                      Visit their website →
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* AI Recipe (premium only) */}
+            {isPremium && (
+              <button className="actionbtn" onClick={() => onRecipe({ name: category?.name || d.cuisine, cuisine: d.cuisine, emoji: category?.emoji || "🍽️", g1: category?.g1 || "#1a0000", g3: category?.g3 || "#a00000" })}>
+                <div className="actionicon" style={{ background:"rgba(255,215,0,0.15)", border:"1px solid rgba(255,215,0,0.3)" }}>👨‍🍳</div>
+                <span className="actionlabel" style={{ color:"#FFD700" }}>Recipe</span>
+              </button>
+            )}
+          </div>
+
+          {/* Non-partner order info banner */}
+          {!isPartner && (
+            <div style={{ margin:"12px 20px 0", padding:"11px 14px", background:"rgba(255,255,255,0.04)", borderRadius:12, border:"1px solid rgba(255,255,255,0.07)", display:"flex", alignItems:"flex-start", gap:10 }}>
+              <span style={{ fontSize:18, flexShrink:0 }}>🛵</span>
+              <div style={{ color:"rgba(255,255,255,0.5)", fontSize:12, lineHeight:1.6 }}>
+                This restaurant has not partnered with Crave yet for direct ordering.
+                {website ? <> <span onClick={() => window.open(website,"_blank")} style={{ color:"#FF6060", cursor:"pointer", fontWeight:700 }}>Visit their website</span> to order directly.</> : " Check their Yelp page for ordering options."}
+              </div>
+            </div>
+          )}
+
+          {/* Detail info rows */}
+          <div style={{ padding:"14px 20px 0" }}>
+
+            {/* Address */}
+            <div className="detailrow">
+              <span style={{ fontSize:18, flexShrink:0 }}>📍</span>
+              <div style={{ flex:1 }}>
+                <div style={{ color:"#fff", fontSize:13, fontWeight:700 }}>{d.address || restaurant.address}</div>
+                <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, marginTop:3 }}>{restaurant.distanceMiles} miles from your location</div>
+              </div>
+              <button onClick={() => window.open(`https://maps.google.com/?q=${d.lat},${d.lng}`, "_blank")}
+                style={{ background:"rgba(79,195,247,0.1)", border:"1px solid rgba(79,195,247,0.25)", borderRadius:8, padding:"5px 10px", color:"#4FC3F7", fontSize:11, fontWeight:700, cursor:"pointer", flexShrink:0 }}>
+                Map →
+              </button>
+            </div>
+
+            {/* Phone */}
+            {d.phone && (
+              <div className="detailrow">
+                <span style={{ fontSize:18, flexShrink:0 }}>📞</span>
+                <div style={{ flex:1 }}>
+                  <div style={{ color:"#fff", fontSize:13, fontWeight:700 }}>{d.phone}</div>
+                  <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, marginTop:3 }}>Tap to call</div>
+                </div>
+                <a href={`tel:${d.phoneRaw || d.phone}`} style={{ background:"rgba(76,175,80,0.1)", border:"1px solid rgba(76,175,80,0.25)", borderRadius:8, padding:"5px 10px", color:"#81C784", fontSize:11, fontWeight:700, cursor:"pointer", textDecoration:"none" }}>
+                  Call →
+                </a>
+              </div>
+            )}
+
+            {/* Hours */}
+            {!loading && (
+              <div className="detailrow" style={{ flexDirection:"column", gap:0 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", width:"100%", marginBottom: showHours ? 10 : 0 }}>
+                  <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                    <span style={{ fontSize:18 }}>🕐</span>
+                    <div>
+                      <div style={{ color: d.isOpenNow ? "#81C784" : "#EF5350", fontSize:13, fontWeight:800 }}>
+                        {d.isOpenNow ? "Open Now" : "Currently Closed"}
+                      </div>
+                      {d.hours?.length > 0 && (() => {
+                        const today = new Date().getDay();
+                        const yd    = today === 0 ? 6 : today - 1;
+                        const th    = d.hours.find(h => h.day === yd);
+                        return th ? <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, marginTop:2 }}>Today {fmtHour(th.start)} – {fmtHour(th.end)}</div> : null;
+                      })()}
+                    </div>
+                  </div>
+                  {d.hours?.length > 0 && (
+                    <button onClick={() => setShowHours(s => !s)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, padding:"4px 10px", color:"rgba(255,255,255,0.5)", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                      {showHours ? "Hide" : "All Hours"}
+                    </button>
+                  )}
+                </div>
+                {showHours && d.hours?.length > 0 && (
+                  <div style={{ width:"100%", background:"rgba(255,255,255,0.04)", borderRadius:10, padding:"10px 12px" }}>
+                    {d.hours.map(h => {
+                      const today = new Date().getDay();
+                      const yd    = today === 0 ? 6 : today - 1;
+                      const isToday = h.day === yd;
+                      return (
+                        <div key={h.day} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0", fontSize:12, color: isToday ? "#fff" : "rgba(255,255,255,0.45)", fontWeight: isToday ? 700 : 500 }}>
+                          <span>{DAY_NAMES[h.day]}{isToday ? " (today)" : ""}</span>
+                          <span>{fmtHour(h.start)} – {fmtHour(h.end)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Yelp link */}
+            {d.yelpUrl && (
+              <div className="detailrow">
+                <span style={{ fontSize:18, flexShrink:0 }}>⭐</span>
+                <div style={{ flex:1 }}>
+                  <div style={{ color:"#fff", fontSize:13, fontWeight:700 }}>Read all {(d.reviewCount || 0).toLocaleString()} reviews</div>
+                  <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, marginTop:3 }}>Powered by Yelp</div>
+                </div>
+                <a href={d.yelpUrl} target="_blank" rel="noopener noreferrer"
+                  style={{ background:"rgba(232,0,10,0.1)", border:"1px solid rgba(232,0,10,0.25)", borderRadius:8, padding:"5px 10px", color:"#FF6060", fontSize:11, fontWeight:700, cursor:"pointer", textDecoration:"none" }}>
+                  Yelp →
+                </a>
+              </div>
+            )}
+          </div>
+
+          {/* Reviews */}
+          {detail?.reviews?.length > 0 && (
+            <div style={{ padding:"14px 20px" }}>
+              <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, fontWeight:700, letterSpacing:1, marginBottom:10 }}>RECENT REVIEWS</div>
+              {detail.reviews.map(rv => (
+                <div key={rv.id} style={{ background:"rgba(255,255,255,0.04)", borderRadius:14, padding:"12px 14px", border:"1px solid rgba(255,255,255,0.06)", marginBottom:10 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <div style={{ width:30, height:30, borderRadius:"50%", background:"linear-gradient(135deg,#E8000A,#FF3322)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:800, color:"#fff", flexShrink:0 }}>
+                        {rv.author.charAt(0)}
+                      </div>
+                      <div>
+                        <div style={{ color:"#fff", fontSize:12, fontWeight:700 }}>{rv.author}</div>
+                        <div style={{ color:"rgba(255,255,255,0.3)", fontSize:10 }}>{rv.date}</div>
+                      </div>
+                    </div>
+                    <div style={{ display:"flex", gap:2 }}>
+                      {[1,2,3,4,5].map(i => (
+                        <span key={i} style={{ fontSize:11, color: i <= rv.rating ? "#FFD338" : "rgba(255,255,255,0.2)" }}>★</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ color:"rgba(255,255,255,0.6)", fontSize:12.5, lineHeight:1.65 }}>{rv.text}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Loading state */}
+          {loading && (
+            <div style={{ padding:"20px", display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+              <div style={{ fontSize:28, animation:"spin 1.2s linear infinite" }}>⏳</div>
+              <div style={{ color:"rgba(255,255,255,0.4)", fontSize:13 }}>Loading restaurant details...</div>
+            </div>
+          )}
+
+          <div style={{ height:28 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── LIKED CARD ───────────────────────────────────────────────────────────────
+function LikedCard({ restaurant, category, onClick }) {
+  const [imgErr, setImgErr] = useState(false);
+  const hasPhoto = restaurant.primaryPhoto && !imgErr;
+
+  return (
+    <div className="likedcard" onClick={onClick}>
+      <div style={{ display:"flex", minHeight:96 }}>
+        {/* Thumbnail */}
+        <div style={{ width:100, flexShrink:0, position:"relative", background: category ? `radial-gradient(circle,${category.g2},${category.g1})` : "#1a1a1a", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          {hasPhoto ? (
+            <img src={restaurant.primaryPhoto} alt={restaurant.name} onError={() => setImgErr(true)} style={{ width:"100%", height:"100%", objectFit:"cover", position:"absolute", inset:0 }} />
+          ) : (
+            <div style={{ fontSize:40 }}>{category?.emoji || "🍽️"}</div>
+          )}
+          {/* Open dot */}
+          {restaurant.isOpenNow !== null && restaurant.isOpenNow !== undefined && (
+            <div style={{ position:"absolute", top:8, left:8, width:8, height:8, borderRadius:"50%", background: restaurant.isOpenNow ? "#4CAF50" : "#F44336", border:"1.5px solid rgba(0,0,0,0.4)" }} />
+          )}
+        </div>
+
+        {/* Info */}
+        <div style={{ flex:1, padding:"12px 14px 10px", display:"flex", flexDirection:"column", justifyContent:"space-between", minWidth:0 }}>
+          <div>
+            <div style={{ color:"#fff", fontSize:15, fontWeight:800, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{restaurant.name}</div>
+            <div style={{ color:"rgba(255,255,255,0.4)", fontSize:11, marginTop:2, fontWeight:600 }}>{restaurant.cuisine} · {category?.name}</div>
+          </div>
+
+          {/* 3 quick data points */}
+          <div style={{ display:"flex", gap:6, marginTop:8, flexWrap:"wrap" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:4, background:"rgba(255,211,56,0.12)", borderRadius:8, padding:"4px 9px" }}>
+              <span style={{ color:"#FFD338", fontSize:11 }}>⭐</span>
+              <span style={{ color:"#FFD338", fontSize:11, fontWeight:800 }}>{restaurant.rating}</span>
+              {restaurant.reviewCount > 0 && <span style={{ color:"rgba(255,255,255,0.3)", fontSize:10 }}>({restaurant.reviewCount.toLocaleString()})</span>}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:4, background:"rgba(232,0,10,0.12)", borderRadius:8, padding:"4px 9px" }}>
+              <span style={{ color:"#FF6060", fontSize:11 }}>📏</span>
+              <span style={{ color:"#FF6060", fontSize:11, fontWeight:800 }}>{restaurant.distanceMiles} mi</span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:4, background: restaurant.isOpenNow ? "rgba(76,175,80,0.12)" : "rgba(244,67,54,0.12)", borderRadius:8, padding:"4px 9px" }}>
+              <span style={{ fontSize:10 }}>{restaurant.isOpenNow ? "🟢" : "🔴"}</span>
+              <span style={{ color: restaurant.isOpenNow ? "#81C784" : "#EF5350", fontSize:11, fontWeight:800 }}>{restaurant.isOpenNow ? "Open" : "Closed"}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Arrow */}
+        <div style={{ display:"flex", alignItems:"center", paddingRight:14 }}>
+          <div style={{ color:"rgba(255,255,255,0.2)", fontSize:20 }}>›</div>
+        </div>
+      </div>
+
+      {/* Address strip */}
+      <div style={{ padding:"8px 14px 10px", borderTop:"1px solid rgba(255,255,255,0.04)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ color:"rgba(255,255,255,0.3)", fontSize:10, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
+          📍 {restaurant.address}
+        </div>
+        <div style={{ color:"rgba(255,255,255,0.2)", fontSize:10, flexShrink:0, marginLeft:8 }}>Tap for full details</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AI RECIPE MODAL ──────────────────────────────────────────────────────────
+function RecipeModal({ name, cuisine, emoji, g1, g3, onClose }) {
+  const [recipe,    setRecipe]    = useState(null);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState(false);
+  const [activeTab, setActiveTab] = useState("ingredients");
+
+  const load = useCallback(() => {
+    setLoading(true); setError(false); setRecipe(null);
+    fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        messages: [{
+          role: "user",
+          content: `You are a professional chef. Generate a home recipe for "${name}" (${cuisine} cuisine). Return ONLY valid JSON, no markdown: {"servings":2,"prepTime":"15 min","cookTime":"30 min","difficulty":"Medium","chefTip":"One sentence tip","ingredients":[{"amount":"2","unit":"cups","item":"ingredient"}],"steps":[{"title":"Step","instruction":"Instruction."}]} 8-10 ingredients, 5-6 steps.`,
+        }],
+      }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        const text = data.content?.find(b => b.type === "text")?.text || "";
+        setRecipe(JSON.parse(text.replace(/```json|```/g, "").trim()));
+        setLoading(false);
+      })
+      .catch(() => { setError(true); setLoading(false); });
+  }, [name, cuisine]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const diffColor = { Easy:"#4CAF50", Medium:"#FF9800", Hard:"#F44336" };
+
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.94)", zIndex:400, display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width:"100%", maxWidth:390, background:"#0f0f0f", borderRadius:"28px 28px 0 0", maxHeight:"88vh", display:"flex", flexDirection:"column", border:"1px solid rgba(255,255,255,0.08)", animation:"slideUp 0.32s ease", overflow:"hidden" }}>
+        <div style={{ position:"relative", height:155, flexShrink:0, background:`radial-gradient(circle at 40% 50%, ${g3}, ${g1})` }}>
+          <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-58%)", fontSize:82 }}>{emoji}</div>
+          <div style={{ position:"absolute", inset:0, background:"linear-gradient(to top,rgba(15,15,15,1),transparent 55%)" }} />
+          <div style={{ position:"absolute", bottom:14, left:20 }}>
+            <div style={{ background:"linear-gradient(135deg,#FFD700,#FFA500)", borderRadius:8, padding:"2px 10px", fontSize:11, fontWeight:900, color:"#000", display:"inline-block", marginBottom:4 }}>👑 PREMIUM RECIPE</div>
+            <div style={{ color:"#fff", fontSize:19, fontWeight:900 }}>{name}</div>
+          </div>
+          <button onClick={onClose} style={{ position:"absolute", top:14, right:14, width:32, height:32, borderRadius:"50%", background:"rgba(0,0,0,0.6)", border:"none", color:"#fff", fontSize:16, cursor:"pointer" }}>✕</button>
+        </div>
+
+        {loading && (
+          <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16, padding:32 }}>
+            <div style={{ fontSize:44, animation:"spin 1.2s linear infinite" }}>👨‍🍳</div>
+            <div style={{ color:"#fff", fontSize:15, fontWeight:800 }}>Generating your recipe...</div>
+          </div>
+        )}
+
+        {error && !loading && (
+          <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:12, padding:32 }}>
+            <div style={{ fontSize:44 }}>😅</div>
+            <div style={{ color:"#fff", fontSize:15, fontWeight:800 }}>Could not load recipe</div>
+            <button onClick={load} className="redbtn" style={{ width:"auto", padding:"12px 28px", marginTop:8 }}>Try Again</button>
+          </div>
+        )}
+
+        {recipe && !loading && (
+          <div style={{ flex:1, overflowY:"auto", minHeight:0 }}>
+            <div style={{ display:"flex", gap:8, padding:"14px 18px 0", flexWrap:"wrap" }}>
+              {[
+                { icon:"🕐", label:"Prep",   val: recipe.prepTime },
+                { icon:"🔥", label:"Cook",   val: recipe.cookTime },
+                { icon:"👥", label:"Serves", val: String(recipe.servings) },
+                { icon:"📊", label:"Level",  val: recipe.difficulty, color: diffColor[recipe.difficulty] || "#fff" },
+              ].map(m => (
+                <div key={m.label} style={{ background:"rgba(255,255,255,0.06)", borderRadius:12, padding:"10px 8px", flex:1, minWidth:60, textAlign:"center", border:"1px solid rgba(255,255,255,0.06)" }}>
+                  <div style={{ fontSize:16 }}>{m.icon}</div>
+                  <div style={{ color: m.color || "#fff", fontSize:11, fontWeight:800, marginTop:3 }}>{m.val}</div>
+                  <div style={{ color:"rgba(255,255,255,0.35)", fontSize:9, marginTop:1 }}>{m.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ margin:"12px 18px 0", background:"rgba(232,0,10,0.1)", border:"1px solid rgba(232,0,10,0.2)", borderRadius:14, padding:"12px 14px", display:"flex", gap:10 }}>
+              <span style={{ fontSize:20, flexShrink:0 }}>👨‍🍳</span>
+              <div>
+                <div style={{ color:"#E8000A", fontSize:10, fontWeight:800, letterSpacing:1, marginBottom:3 }}>CHEF TIP</div>
+                <div style={{ color:"rgba(255,255,255,0.7)", fontSize:12.5, lineHeight:1.6 }}>{recipe.chefTip}</div>
+              </div>
+            </div>
+
+            <div style={{ display:"flex", margin:"14px 18px 0", background:"rgba(255,255,255,0.05)", borderRadius:14, padding:4 }}>
+              {["ingredients","steps"].map(t => (
+                <button key={t} onClick={() => setActiveTab(t)} style={{ flex:1, padding:"9px 0", borderRadius:11, border:"none", background: activeTab === t ? "linear-gradient(135deg,#E8000A,#FF3322)" : "transparent", color: activeTab === t ? "#fff" : "rgba(255,255,255,0.4)", fontSize:13, fontWeight:800, cursor:"pointer", transition:"all 0.2s" }}>
+                  {t === "ingredients" ? "🧂 Ingredients" : "📋 Steps"}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === "ingredients" && (
+              <div style={{ padding:"14px 18px 28px" }}>
+                <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, fontWeight:700, letterSpacing:1, marginBottom:10 }}>{recipe.ingredients.length} INGREDIENTS</div>
+                {recipe.ingredients.map((ing, i) => (
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom: i < recipe.ingredients.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
+                    <div style={{ width:28, height:28, borderRadius:8, background:"rgba(232,0,10,0.12)", border:"1px solid rgba(232,0,10,0.2)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                      <span style={{ color:"#E8000A", fontSize:10, fontWeight:900 }}>{i + 1}</span>
+                    </div>
+                    <div style={{ flex:1, color:"#fff", fontSize:13, fontWeight:700 }}>{ing.item}</div>
+                    <div style={{ background:"rgba(255,255,255,0.06)", borderRadius:8, padding:"3px 9px", flexShrink:0 }}>
+                      <span style={{ color:"rgba(255,255,255,0.8)", fontSize:11, fontWeight:700 }}>{ing.amount} {ing.unit}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {activeTab === "steps" && (
+              <div style={{ padding:"14px 18px 28px" }}>
+                <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, fontWeight:700, letterSpacing:1, marginBottom:10 }}>{recipe.steps.length} STEPS</div>
+                {recipe.steps.map((s, i) => (
+                  <div key={i} style={{ display:"flex", gap:14, marginBottom:18 }}>
+                    <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center" }}>
+                      <div style={{ width:32, height:32, borderRadius:"50%", background: i === 0 ? "linear-gradient(135deg,#E8000A,#FF3322)" : "rgba(255,255,255,0.07)", border: i === 0 ? "none" : "1px solid rgba(255,255,255,0.1)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <span style={{ color:"#fff", fontSize:12, fontWeight:900 }}>{i + 1}</span>
+                      </div>
+                      {i < recipe.steps.length - 1 && <div style={{ width:1, flex:1, background:"rgba(255,255,255,0.07)", marginTop:6, minHeight:12 }} />}
+                    </div>
+                    <div style={{ flex:1, paddingTop:5 }}>
+                      <div style={{ color:"#fff", fontSize:13, fontWeight:800, marginBottom:4 }}>{s.title}</div>
+                      <div style={{ color:"rgba(255,255,255,0.55)", fontSize:12.5, lineHeight:1.7 }}>{s.instruction}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ height:20 }} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── SWIPE WALL ───────────────────────────────────────────────────────────────
+function SwipeWall({ onShare, onUpgrade, isShare }) {
+  return (
+    <div style={{ position:"absolute", inset:0, zIndex:50, background:"rgba(0,0,0,0.92)", backdropFilter:"blur(16px)", borderRadius:26, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"28px 24px" }}>
+      <div style={{ fontSize:52, marginBottom:14 }}>{isShare ? "🎁" : "🔥"}</div>
+      {!isShare && (
+        <>
+          <div style={{ color:"#fff", fontSize:19, fontWeight:900, textAlign:"center", marginBottom:8 }}>You have used your {FREE_DAILY_SWIPES} free swipes</div>
+          <div style={{ color:"rgba(255,255,255,0.5)", fontSize:13, textAlign:"center", lineHeight:1.6, marginBottom:18 }}>Share Crave to get more free swipes, or go Premium.</div>
+          <button onClick={onShare} style={{ width:"100%", padding:"13px 0", background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.2)", borderRadius:18, color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", marginBottom:12 }}>
+            📲 Share for +{BONUS_SHARE_SWIPES} Free Swipes
+          </button>
+        </>
+      )}
+      {isShare && (
+        <>
+          <div style={{ color:"#fff", fontSize:19, fontWeight:900, textAlign:"center", marginBottom:8 }}>Share and Get 10 More!</div>
+          <div style={{ color:"rgba(255,255,255,0.5)", fontSize:13, textAlign:"center", lineHeight:1.6, marginBottom:20 }}>Send Crave to a friend. You both get 10 free swipes daily.</div>
+          <button onClick={onShare} className="redbtn" style={{ marginBottom:12 }}>📲 Share Crave Now</button>
+          <div style={{ color:"rgba(255,255,255,0.3)", fontSize:12, marginBottom:14 }}>or upgrade below</div>
+        </>
+      )}
+      <div style={{ width:"100%", background:"rgba(232,0,10,0.12)", border:"1px solid rgba(232,0,10,0.28)", borderRadius:18, padding:"16px 18px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+          <span style={{ fontSize:20 }}>👑</span>
+          <div>
+            <div style={{ color:"#fff", fontSize:14, fontWeight:900 }}>Crave Premium</div>
+            <div style={{ color:"rgba(255,255,255,0.45)", fontSize:11 }}>${MONTHLY_PRICE}/month, cancel anytime</div>
+          </div>
+        </div>
+        {["♾️ Unlimited swipes", "👨‍🍳 AI recipes", "🛵 1-tap ordering", "📍 Real-time discovery"].map(f => (
+          <div key={f} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:"#E8000A", flexShrink:0 }} />
+            <span style={{ color:"rgba(255,255,255,0.7)", fontSize:12 }}>{f}</span>
+          </div>
+        ))}
+        <button onClick={onUpgrade} className="redbtn" style={{ marginTop:12 }}>
+          👑 Go Premium — ${MONTHLY_PRICE}/mo
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── BOTTOM NAV ───────────────────────────────────────────────────────────────
+function BottomNav({ tab, setTab, count }) {
+  const tabs = [
+    { id:"discover", icon:"⚡", label:"Discover" },
+    { id:"liked",    icon:"❤️", label:"Saved",   badge: count },
+    { id:"profile",  icon:"👤", label:"Profile" },
+  ];
+
+  return (
+    <nav style={{ padding:"8px 10px 24px", background:"rgba(12,12,16,0.98)", backdropFilter:"blur(20px)", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", justifyContent:"space-around", flexShrink:0 }}>
+      {tabs.map(t => (
+        <button key={t.id} onClick={() => setTab(t.id)} style={{ background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3, color: tab === t.id ? "#E8000A" : "rgba(255,255,255,0.28)" }}>
+          <div style={{ width:42, height:34, borderRadius:12, background: tab === t.id ? "rgba(232,0,10,0.15)" : "transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:19, position:"relative", transition:"all 0.2s" }}>
+            {t.icon}
+            {t.badge > 0 && (
+              <div style={{ position:"absolute", top:1, right:1, width:15, height:15, borderRadius:"50%", background:"#E8000A", color:"#fff", fontSize:8, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", border:"2px solid #0C0C10" }}>
+                {t.badge > 9 ? "9+" : t.badge}
+              </div>
+            )}
+          </div>
+          <span style={{ fontSize:9.5, fontWeight:700, letterSpacing:"0.04em" }}>{t.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+export default function App() {
+  const [screen,       setScreen]       = useState("splash");
+  const [step,         setStep]         = useState(0);
+  const [tasteTags,    setTasteTags]    = useState([]);
+  const [userLoc,      setUserLoc]      = useState(null);
+  const [layer,        setLayer]        = useState("categories");
+  const [catIdx,       setCatIdx]       = useState(0);
+  const [restaurants,  setRestaurants]  = useState([]);
+  const [restIdx,      setRestIdx]      = useState(0);
+  const [activeCat,    setActiveCat]    = useState(null);
+  const [fetching,     setFetching]     = useState(false);
+  const [fetchErr,     setFetchErr]     = useState(false);
+  const [liked,        setLiked]        = useState([]);
+  const [tab,          setTab]          = useState("discover");
+  const [dx,           setDx]           = useState(0);
+  const [dy,           setDy]           = useState(0);
+  const [dragging,     setDragging]     = useState(false);
+  const [exiting,      setExiting]      = useState(false);
+  const [banner,       setBanner]       = useState(null);
+  const [detailTarget, setDetailTarget] = useState(null);
+  const [recipeTarget, setRecipeTarget] = useState(null);
+  const [swipesUsed,   setSwipesUsed]   = useState(0);
+  const [bonusSwipes,  setBonusSwipes]  = useState(0);
+  const [isPremium,    setIsPremium]    = useState(false);
+  const [showWall,     setShowWall]     = useState(false);
+  const [wallMode,     setWallMode]     = useState("limit");
+  const [shareToast,   setShareToast]   = useState(false);
+
+  const dsRef  = useRef({ x:0, y:0 });
+  const velRef = useRef(0);
+  const lxRef  = useRef(0);
+
+  const totalAllowed = FREE_DAILY_SWIPES + bonusSwipes;
+  const swipesLeft   = Math.max(0, totalAllowed - swipesUsed);
+  const swipesLow    = swipesLeft <= 3 && swipesLeft > 0 && !isPremium;
+  const currentCard  = layer === "categories" ? DISHES[catIdx] : restaurants[restIdx];
+  const isDone       = layer === "categories" ? catIdx >= DISHES.length : restIdx >= restaurants.length;
+  const likeAlpha    = Math.min(1, Math.max(0,  dx / 85));
+  const nopeAlpha    = Math.min(1, Math.max(0, -dx / 85));
+
+  const handleShare   = useCallback(() => { setBonusSwipes(p => p + BONUS_SHARE_SWIPES); setShowWall(false); setShareToast(true); setTimeout(() => setShareToast(false), 2800); }, []);
+  const handleUpgrade = useCallback(() => { setIsPremium(true); setShowWall(false); setBanner("premium"); setTimeout(() => setBanner(null), 3000); }, []);
+
+  const loadRestaurants = useCallback(async (cat) => {
+    setFetching(true); setFetchErr(false);
+    setActiveCat(cat); setLayer("restaurants"); setRestIdx(0); setRestaurants([]);
+    try {
+      const lat = userLoc?.lat || 38.9072;
+      const lng = userLoc?.lng || -77.0369;
+      const results = await searchRestaurants(lat, lng, cat.term);
+      setRestaurants(results);
+    } catch {
+      setFetchErr(true);
+    } finally {
+      setFetching(false);
+    }
+  }, [userLoc]);
+
+  const swipe = useCallback((dir) => {
+    if (exiting) return;
+    if (!isPremium && swipesUsed >= totalAllowed) { setWallMode("limit"); setShowWall(true); return; }
+
+    setExiting(true);
+    setDx(dir === "right" ? 700 : -700);
+    if (!isPremium) setSwipesUsed(p => p + 1);
+
+    if (layer === "categories") {
+      const cat = DISHES[catIdx];
+      if (dir === "right") {
+        setBanner("searching");
+        setTimeout(() => setBanner(null), 1800);
+        loadRestaurants(cat);
+      } else {
+        setBanner("nope");
+        setTimeout(() => setBanner(null), 1400);
+        setTimeout(() => { setCatIdx(i => i + 1); setDx(0); setDy(0); setExiting(false); }, 420);
+        return;
+      }
+    } else {
+      const rest = restaurants[restIdx];
+      if (dir === "right" && rest) {
+        setLiked(p => [...p, { ...rest, category: activeCat }]);
+        setBanner("like");
+      } else {
+        setBanner("nope");
+      }
+      setTimeout(() => setBanner(null), 1600);
+    }
+
+    setTimeout(() => {
+      if (layer === "restaurants") {
+        const next = restIdx + 1;
+        if (next >= restaurants.length) {
+          setBanner("back");
+          setTimeout(() => setBanner(null), 2000);
+          setLayer("categories");
+          setCatIdx(i => i + 1);
+        } else {
+          setRestIdx(next);
+        }
+      }
+      setDx(0); setDy(0); setExiting(false);
+    }, 420);
+  }, [exiting, isPremium, swipesUsed, totalAllowed, layer, catIdx, restIdx, restaurants, activeCat, loadRestaurants]);
+
+  const onDown = (e) => {
+    if (exiting) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    const y = e.touches ? e.touches[0].clientY : e.clientY;
+    dsRef.current = { x, y }; lxRef.current = x; velRef.current = 0; setDragging(true);
+  };
+  const onMove = (e) => {
+    if (!dragging) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    const y = e.touches ? e.touches[0].clientY : e.clientY;
+    velRef.current = x - lxRef.current; lxRef.current = x;
+    setDx(x - dsRef.current.x); setDy((y - dsRef.current.y) * 0.22);
+  };
+  const onUp = () => {
+    if (!dragging) return;
+    setDragging(false);
+    if (dx > 80 || velRef.current > 12) swipe("right");
+    else if (dx < -80 || velRef.current < -12) swipe("left");
+    else { setDx(0); setDy(0); }
+  };
+
+  useEffect(() => {
+    const h = (e) => {
+      if (screen !== "main" || tab !== "discover") return;
+      if (e.key === "ArrowRight") swipe("right");
+      if (e.key === "ArrowLeft")  swipe("left");
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [screen, tab, swipe]);
+
+  // ── Splash screen ──────────────────────────────────────────────────────────
+  if (screen === "splash") {
+    return (
+      <div style={{ background:"#0A0A0A", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <style>{CSS}</style>
+        <div className="phone" style={{ position:"relative" }}>
+          <Splash onDone={() => setScreen("onboarding")} />
+        </div>
+      </div>
+    );
+  }
+
+  // ── Onboarding ─────────────────────────────────────────────────────────────
+  if (screen === "onboarding") {
+    return (
+      <div style={{ background:"#0A0A0A", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <style>{CSS}</style>
+        <Onboard
+          step={step} setStep={setStep}
+          tasteTags={tasteTags} setTasteTags={setTasteTags}
+          onLocationGranted={loc => setUserLoc(loc)}
+          onDone={() => setScreen("main")}
+        />
+      </div>
+    );
+  }
+
+  // ── Main app ───────────────────────────────────────────────────────────────
+  return (
+    <div style={{ background:"#0A0A0A", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <style>{CSS}</style>
+      <div className="phone">
+
+        {/* Status bar */}
+        <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 24px 0", alignItems:"center" }}>
+          <span style={{ color:"#fff", fontSize:12, fontWeight:800 }}>9:41</span>
+          <div style={{ display:"flex", gap:5 }}>
+            {[14, 14, 22].map((w, i) => (
+              <div key={i} style={{ width:w, height:6, background:"rgba(255,255,255,0.55)", borderRadius:3 }} />
+            ))}
+          </div>
+        </div>
+
+        {/* Header */}
+        <div style={{ padding:"8px 22px 0", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div>
+            <div style={{ fontSize:28, fontWeight:900, color:"#fff", letterSpacing:"-1px", lineHeight:1 }}>
+              crave<span style={{ color:"#E8000A" }}>.</span>
+              {isPremium && (
+                <span style={{ fontSize:11, background:"linear-gradient(135deg,#FFD700,#FFA500)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginLeft:6, fontWeight:900 }}>PRO</span>
+              )}
+            </div>
+            <div style={{ color:"rgba(255,255,255,0.3)", fontSize:11, marginTop:1, fontWeight:600 }}>
+              {tab === "discover"
+                ? layer === "categories"
+                  ? isPremium ? "♾️ Swipe to discover" : `${swipesLeft} swipes left today`
+                  : activeCat ? `${activeCat.emoji} ${activeCat.name} near ${userLoc ? "you" : "DC"}` : "Restaurants near you"
+                : tab === "liked"
+                ? `${liked.length} saved spots`
+                : "Your profile"}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            {!isPremium && (
+              <div onClick={() => { setWallMode("limit"); setShowWall(true); }} style={{ background:"rgba(232,0,10,0.15)", border:"1px solid rgba(232,0,10,0.3)", borderRadius:20, padding:"5px 12px", cursor:"pointer" }}>
+                <span style={{ fontSize:11, color:"#FF6060", fontWeight:800 }}>👑 PRO</span>
+              </div>
+            )}
+            <div style={{ width:36, height:36, borderRadius:"50%", background: isPremium ? "linear-gradient(135deg,#FFD700,#FFA500)" : "rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>
+              👤
+            </div>
+          </div>
+        </div>
+
+        {/* Layer indicator */}
+        {tab === "discover" && (
+          <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 22px 0" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+              <div style={{ width:20, height:20, borderRadius:"50%", background: layer === "categories" ? "#E8000A" : "rgba(255,255,255,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:"#fff", flexShrink:0 }}>1</div>
+              <span style={{ color: layer === "categories" ? "#fff" : "rgba(255,255,255,0.35)", fontSize:11, fontWeight:700 }}>Pick a Craving</span>
+            </div>
+            <div style={{ height:1, flex:1, background:"rgba(255,255,255,0.1)", margin:"0 4px" }} />
+            <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+              <div style={{ width:20, height:20, borderRadius:"50%", background: layer === "restaurants" ? "#E8000A" : "rgba(255,255,255,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:"#fff", flexShrink:0 }}>2</div>
+              <span style={{ color: layer === "restaurants" ? "#fff" : "rgba(255,255,255,0.35)", fontSize:11, fontWeight:700 }}>Find a Restaurant</span>
+            </div>
+          </div>
+        )}
+
+        {/* ── DISCOVER TAB ── */}
+        {tab === "discover" && (
+          <div className="tabbody">
+            {banner === "like"      && <div className="toast toast-r">❤️ Saved to your spots!</div>}
+            {banner === "nope"      && <div className="toast toast-d">👋 Next one!</div>}
+            {banner === "premium"   && <div className="toast toast-r">👑 Welcome to Premium!</div>}
+            {banner === "searching" && <div className="toast toast-r">🔍 Finding spots near you...</div>}
+            {banner === "back"      && <div className="toast toast-d">All spots seen! Pick another craving.</div>}
+            {shareToast             && <div className="toast toast-r">🎁 +{BONUS_SHARE_SWIPES} bonus swipes!</div>}
+
+            {swipesLow && (
+              <div style={{ background:"rgba(232,0,10,0.12)", border:"1px solid rgba(232,0,10,0.25)", borderRadius:12, padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, flexShrink:0 }}>
+                <span style={{ color:"rgba(255,255,255,0.7)", fontSize:12, fontWeight:700 }}>⚠️ {swipesLeft} swipe{swipesLeft !== 1 ? "s" : ""} left</span>
+                <button onClick={() => { setWallMode("share"); setShowWall(true); }} style={{ background:"none", border:"none", color:"#E8000A", fontSize:12, fontWeight:800, cursor:"pointer" }}>Get More →</button>
+              </div>
+            )}
+
+            <div className="cardstack">
+              {/* Ghost stack */}
+              {!isDone && !fetching && [2, 1].map(o => {
+                if (layer === "categories") {
+                  const bg = DISHES[catIdx + o];
+                  if (!bg) return null;
+                  return (
+                    <div key={bg.id} style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", transform:`scale(${1 - o * 0.035}) translateY(${o * 13}px)`, zIndex: 10 - o }}>
+                      <DishCard dish={bg} dim />
+                    </div>
+                  );
+                } else {
+                  const bg = restaurants[restIdx + o];
+                  if (!bg || !activeCat) return null;
+                  return (
+                    <div key={bg.id} style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", transform:`scale(${1 - o * 0.035}) translateY(${o * 13}px)`, zIndex: 10 - o }}>
+                      <RestCard restaurant={bg} category={activeCat} dim />
+                    </div>
+                  );
+                }
+              })}
+
+              {/* Fetching */}
+              {fetching && (
+                <div style={{ position:"absolute", inset:0, borderRadius:26, background:"linear-gradient(145deg,#1a1a1a,#222)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16, border:"1px solid rgba(255,255,255,0.07)" }}>
+                  <div style={{ fontSize:52, animation:"spin 1.2s linear infinite" }}>{activeCat?.emoji || "🔍"}</div>
+                  <div style={{ color:"#fff", fontSize:18, fontWeight:800 }}>Finding {activeCat?.name} spots...</div>
+                  <div style={{ color:"rgba(255,255,255,0.4)", fontSize:13 }}>{userLoc ? "📍 Near your location" : "Using default location"}</div>
+                </div>
+              )}
+
+              {/* Fetch error */}
+              {fetchErr && !fetching && (
+                <div style={{ position:"absolute", inset:0, borderRadius:26, background:"linear-gradient(145deg,#1a1a1a,#222)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:14, border:"1px solid rgba(255,255,255,0.07)" }}>
+                  <div style={{ fontSize:52 }}>😅</div>
+                  <div style={{ color:"#fff", fontSize:18, fontWeight:800 }}>Could not load restaurants</div>
+                  <button onClick={() => activeCat && loadRestaurants(activeCat)} className="redbtn" style={{ width:"auto", padding:"12px 28px" }}>Try Again</button>
+                  <button onClick={() => { setLayer("categories"); setFetchErr(false); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", fontSize:13, cursor:"pointer" }}>Back to categories</button>
+                </div>
+              )}
+
+              {/* Main swipe card */}
+              {!isDone && !fetching && !fetchErr && currentCard && (
+                <div
+                  className={`swipecard${exiting ? " leaving" : ""}`}
+                  style={{ transform:`translateX(${dx}px) translateY(${dy}px) rotate(${dx * 0.065}deg)`, cursor: dragging ? "grabbing" : "grab", touchAction:"none", zIndex:20 }}
+                  onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
+                  onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}
+                >
+                  {layer === "categories"
+                    ? <DishCard dish={currentCard} />
+                    : <RestCard restaurant={currentCard} category={activeCat} />
+                  }
+
+                  {showWall && <SwipeWall onShare={handleShare} onUpgrade={handleUpgrade} isShare={wallMode === "share"} />}
+
+                  {/* Stamps */}
+                  <div style={{ position:"absolute", top:28, left:20, border:"3px solid #4CAF50", borderRadius:10, padding:"5px 16px", color:"#4CAF50", fontSize:20, fontWeight:900, letterSpacing:3, transform:"rotate(-14deg)", opacity: likeAlpha, zIndex:5 }}>
+                    {layer === "categories" ? "CRAVE!" : "YUMMY!"}
+                  </div>
+                  <div style={{ position:"absolute", top:28, right:20, border:"3px solid #F44336", borderRadius:10, padding:"5px 16px", color:"#F44336", fontSize:20, fontWeight:900, letterSpacing:3, transform:"rotate(14deg)", opacity: nopeAlpha, zIndex:5 }}>
+                    NOPE
+                  </div>
+
+                  {/* Card info */}
+                  <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"20px 20px 22px", zIndex: showWall ? 1 : 5 }}>
+                    {layer === "categories" ? (
+                      <div>
+                        <div style={{ fontSize:26, fontWeight:900, color:"#fff", letterSpacing:"-0.5px", lineHeight:1.1 }}>{currentCard.name}</div>
+                        <div style={{ color:"rgba(255,255,255,0.5)", fontSize:12, marginTop:4, fontWeight:600 }}>Swipe right to find restaurants near you</div>
+                        <div style={{ display:"flex", gap:5, marginTop:10, flexWrap:"wrap" }}>
+                          {currentCard.tags.map(t => <span key={t} className="chip">{t}</span>)}
+                        </div>
+                        <div style={{ marginTop:12, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(16px)", borderRadius:13, padding:"10px 14px", border:"1px solid rgba(255,255,255,0.1)", display:"flex", alignItems:"center", gap:8 }}>
+                          <span style={{ fontSize:16 }}>📍</span>
+                          <span style={{ color:"rgba(255,255,255,0.75)", fontSize:12.5, fontWeight:700 }}>
+                            {userLoc ? "Searching near your location" : "Enable location for real results"}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontSize:22, fontWeight:900, color:"#fff", letterSpacing:"-0.5px", lineHeight:1.1 }}>{currentCard.name}</div>
+                            <div style={{ color:"rgba(255,255,255,0.5)", fontSize:12, marginTop:3, fontWeight:600 }}>{currentCard.cuisine}</div>
+                          </div>
+                          <div style={{ background:"rgba(0,0,0,0.6)", backdropFilter:"blur(12px)", borderRadius:14, padding:"8px 10px", textAlign:"center", border:"1px solid rgba(255,255,255,0.1)", flexShrink:0, marginLeft:10 }}>
+                            <div style={{ fontSize:14 }}>⭐</div>
+                            <div style={{ color:"#fff", fontSize:13, fontWeight:800, marginTop:1 }}>{currentCard.rating}</div>
+                            <div style={{ color:"rgba(255,255,255,0.4)", fontSize:10, fontWeight:700 }}>{currentCard.price}</div>
+                          </div>
+                        </div>
+                        <div style={{ marginTop:10, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(16px)", borderRadius:13, padding:"10px 14px", border:"1px solid rgba(255,255,255,0.1)" }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ color:"rgba(255,255,255,0.85)", fontSize:12, fontWeight:700 }}>{currentCard.name}</div>
+                              <div style={{ color:"rgba(255,255,255,0.35)", fontSize:10, marginTop:2 }}>{currentCard.address}</div>
+                            </div>
+                            <div style={{ background:"rgba(232,0,10,0.2)", border:"1px solid rgba(232,0,10,0.4)", borderRadius:10, padding:"5px 10px", flexShrink:0, marginLeft:8, textAlign:"center" }}>
+                              <div style={{ color:"#FF6060", fontSize:13, fontWeight:900 }}>📏 {currentCard.distanceMiles} mi</div>
+                              <div style={{ color:"rgba(255,255,255,0.3)", fontSize:9, marginTop:1 }}>from you</div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={e => { e.stopPropagation(); setDetailTarget({ restaurant: currentCard, category: activeCat }); }}
+                            style={{ width:"100%", marginTop:8, padding:"7px 0", background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:10, color:"rgba(255,255,255,0.7)", fontSize:12, fontWeight:700, cursor:"pointer" }}
+                          >
+                            Tap for full details, hours and reviews →
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Done */}
+              {isDone && !fetching && !fetchErr && (
+                <div style={{ position:"absolute", inset:0, borderRadius:26, background:"linear-gradient(145deg,#1a1a1a,#222)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:14, border:"1px solid rgba(255,255,255,0.07)" }}>
+                  <div style={{ fontSize:64 }}>🍽️</div>
+                  <div style={{ fontSize:22, fontWeight:900, color:"#fff" }}>
+                    {layer === "restaurants" ? "All spots seen!" : "All categories seen!"}
+                  </div>
+                  <div style={{ color:"rgba(255,255,255,0.35)", fontSize:13, textAlign:"center", maxWidth:220, lineHeight:1.6 }}>
+                    {layer === "restaurants"
+                      ? `Every ${activeCat?.name} spot shown. Pick another craving!`
+                      : "Check your saved spots or start over."}
+                  </div>
+                  {layer === "restaurants" && (
+                    <button onClick={() => setLayer("categories")} className="redbtn" style={{ width:"auto", padding:"12px 28px", marginTop:4 }}>
+                      Pick Another Craving
+                    </button>
+                  )}
+                  {layer === "categories" && (
+                    <button onClick={() => { setCatIdx(0); setLiked([]); }} className="redbtn" style={{ width:"auto", padding:"12px 28px", marginTop:4 }}>
+                      Start Over 🔄
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Action buttons */}
+            {!isDone && !fetching && !fetchErr && (
+              <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:16, padding:"10px 0 12px" }}>
+                {[
+                  { fn: () => swipe("left"),                                          s:52, bg:"rgba(244,67,54,0.12)",  bd:"rgba(244,67,54,0.4)",   ic:"✕",  glow:false },
+                  { fn: () => { if (layer==="restaurants") setRestIdx(i=>Math.max(0,i-1)); else setCatIdx(i=>Math.max(0,i-1)); }, s:42, bg:"rgba(100,181,246,0.1)", bd:"rgba(100,181,246,0.3)", ic:"↩",  glow:false },
+                  { fn: () => swipe("right"),                                         s:66, bg:"linear-gradient(135deg,#E8000A,#FF3322)", bd:"none",  ic:"❤️", glow:true  },
+                  { fn: () => swipe("right"),                                         s:42, bg:"rgba(255,215,0,0.1)",   bd:"rgba(255,215,0,0.3)",   ic:"⭐", glow:false },
+                  { fn: () => swipe("right"),                                         s:52, bg:"rgba(76,175,80,0.12)",  bd:"rgba(76,175,80,0.4)",   ic:"✓",  glow:false },
+                ].map((btn, i) => (
+                  <button key={i} onClick={btn.fn}
+                    style={{ width:btn.s, height:btn.s, borderRadius:"50%", background:btn.bg, border: btn.bd !== "none" ? `2px solid ${btn.bd}` : "none", fontSize: btn.s > 58 ? 28 : 20, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", transition:"transform 0.15s", boxShadow: btn.glow ? "0 8px 28px rgba(232,0,10,0.5)" : "none" }}
+                    onMouseEnter={e => e.currentTarget.style.transform = "scale(1.08)"}
+                    onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}
+                    onMouseDown={e => e.currentTarget.style.transform = "scale(0.94)"}
+                    onMouseUp={e => e.currentTarget.style.transform = "scale(1.08)"}
+                  >
+                    {btn.ic}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {!isDone && !fetching && !fetchErr && (
+              <div style={{ color:"rgba(255,255,255,0.16)", fontSize:10, textAlign:"center", paddingBottom:6, fontWeight:600, letterSpacing:"0.05em" }}>
+                {layer === "categories"
+                  ? "← skip · swipe right to find spots →"
+                  : isPremium ? "♾️ Unlimited · swipe freely" : "← pass · swipe right to save →"}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── SAVED TAB ── */}
+        {tab === "liked" && (
+          <div className="tabbody" style={{ overflowY:"auto" }}>
+            {liked.length === 0 ? (
+              <div style={{ height:"100%", minHeight:300, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:10 }}>
+                <div style={{ fontSize:52 }}>💔</div>
+                <div style={{ color:"#fff", fontSize:20, fontWeight:800 }}>No saved spots yet</div>
+                <div style={{ color:"rgba(255,255,255,0.35)", fontSize:13, textAlign:"center", maxWidth:220, lineHeight:1.6 }}>Swipe right on restaurants you love</div>
+              </div>
+            ) : (
+              <>
+                <div style={{ color:"rgba(255,255,255,0.3)", fontSize:12, marginBottom:4, fontWeight:700 }}>
+                  {liked.length} spot{liked.length !== 1 ? "s" : ""} saved — tap any card for full details
+                </div>
+                {liked.map((r, i) => (
+                  <LikedCard
+                    key={`${r.id}-${i}`}
+                    restaurant={r}
+                    category={r.category}
+                    onClick={() => setDetailTarget({ restaurant: r, category: r.category })}
+                  />
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── PROFILE TAB ── */}
+        {tab === "profile" && (
+          <div className="tabbody" style={{ overflowY:"auto" }}>
+            <div style={{ textAlign:"center", marginBottom:20 }}>
+              <div style={{ width:72, height:72, borderRadius:"50%", background: isPremium ? "linear-gradient(135deg,#FFD700,#FFA500)" : "linear-gradient(135deg,#E8000A,#FF3322)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, margin:"0 auto 10px", boxShadow: isPremium ? "0 6px 24px rgba(255,215,0,0.4)" : "none" }}>
+                {isPremium ? "👑" : "👤"}
+              </div>
+              <div style={{ color:"#fff", fontWeight:800, fontSize:18 }}>{isPremium ? "Premium Member" : "Food Explorer"}</div>
+              <div style={{ color:"rgba(255,255,255,0.35)", fontSize:12, marginTop:3 }}>{isPremium ? "Unlimited · AI Recipes · 1-tap ordering" : "Free plan"}</div>
+            </div>
+
+            {!isPremium && (
+              <div style={{ background:"rgba(255,255,255,0.05)", borderRadius:14, padding:16, marginBottom:14, border:"1px solid rgba(255,255,255,0.07)" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+                  <span style={{ color:"rgba(255,255,255,0.7)", fontSize:13, fontWeight:700 }}>Daily Swipes</span>
+                  <span style={{ color:"#fff", fontSize:13, fontWeight:800 }}>{swipesUsed} / {totalAllowed}</span>
+                </div>
+                <div style={{ height:6, background:"rgba(255,255,255,0.1)", borderRadius:3, overflow:"hidden" }}>
+                  <div style={{ height:"100%", width:`${Math.min(100, Math.round(swipesUsed / totalAllowed * 100))}%`, background: swipesUsed / totalAllowed > 0.8 ? "linear-gradient(90deg,#E8000A,#FF3322)" : "linear-gradient(90deg,#4CAF50,#66BB6A)", borderRadius:3, transition:"width 0.5s" }} />
+                </div>
+                <div style={{ display:"flex", gap:8, marginTop:12 }}>
+                  <button onClick={handleShare} style={{ flex:1, padding:"9px 0", background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:10, color:"rgba(255,255,255,0.7)", fontSize:12, fontWeight:700, cursor:"pointer" }}>📲 Share +10</button>
+                  <button onClick={handleUpgrade} style={{ flex:1, padding:"9px 0", background:"linear-gradient(135deg,#E8000A,#FF3322)", border:"none", borderRadius:10, color:"#fff", fontSize:12, fontWeight:800, cursor:"pointer" }}>👑 Go Premium</button>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:16 }}>
+              {[
+                { l:"Saved",    v: liked.length, i:"❤️" },
+                { l:"Swipes",   v: swipesUsed,   i:"⚡" },
+                { l:"Cravings", v: new Set(liked.map(r => r.category?.id)).size, i:"🎯" },
+              ].map(s => (
+                <div key={s.l} style={{ background:"rgba(255,255,255,0.05)", borderRadius:14, padding:"14px 10px", textAlign:"center", border:"1px solid rgba(255,255,255,0.06)" }}>
+                  <div style={{ fontSize:20 }}>{s.i}</div>
+                  <div style={{ color:"#fff", fontWeight:900, fontSize:22, marginTop:4 }}>{s.v}</div>
+                  <div style={{ color:"rgba(255,255,255,0.35)", fontSize:10, marginTop:2 }}>{s.l}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Location status */}
+            <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:14, padding:14, marginBottom:14, border:"1px solid rgba(255,255,255,0.05)" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{ fontSize:20 }}>{userLoc ? "📍" : "🔒"}</div>
+                <div>
+                  <div style={{ color:"#fff", fontSize:13, fontWeight:700 }}>{userLoc ? "Location Active" : "Location Not Set"}</div>
+                  <div style={{ color:"rgba(255,255,255,0.4)", fontSize:11, marginTop:2 }}>
+                    {userLoc ? `${userLoc.lat.toFixed(4)}, ${userLoc.lng.toFixed(4)} · Real distances active` : "Using DC as default"}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {tasteTags.length > 0 && (
+              <div style={{ marginBottom:14 }}>
+                <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, fontWeight:700, letterSpacing:1, marginBottom:8 }}>FLAVOR PROFILE</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
+                  {tasteTags.map(t => <span key={t} className="chip" style={{ background:"rgba(232,0,10,0.18)", borderColor:"rgba(232,0,10,0.3)", color:"#FF6060" }}>{t}</span>)}
+                </div>
+              </div>
+            )}
+
+            <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:14, overflow:"hidden", border:"1px solid rgba(255,255,255,0.05)" }}>
+              {["🔔 Notifications","📍 Location Settings","💌 Share Crave","⚙️ Settings"].map((item, i, a) => (
+                <div key={item} style={{ padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", borderBottom: i < a.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none", cursor:"pointer" }}>
+                  <span style={{ color:"rgba(255,255,255,0.7)", fontSize:13, fontWeight:600 }}>{item}</span>
+                  <span style={{ color:"rgba(255,255,255,0.2)", fontSize:18 }}>›</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <BottomNav tab={tab} setTab={setTab} count={liked.length} />
+      </div>
+
+      {/* ── DETAIL MODAL ── */}
+      {detailTarget && (
+        <DetailModal
+          restaurant={detailTarget.restaurant}
+          category={detailTarget.category}
+          isPremium={isPremium}
+          onClose={() => setDetailTarget(null)}
+          onRecipe={target => { setDetailTarget(null); setRecipeTarget(target); }}
+        />
+      )}
+
+      {/* ── RECIPE MODAL ── */}
+      {recipeTarget && (
+        <RecipeModal
+          name={recipeTarget.name}
+          cuisine={recipeTarget.cuisine}
+          emoji={recipeTarget.emoji}
+          g1={recipeTarget.g1}
+          g3={recipeTarget.g3}
+          onClose={() => setRecipeTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
