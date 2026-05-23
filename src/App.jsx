@@ -1,4 +1,18 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import AuthScreen from "./components/AuthScreen.jsx";
+import { supabase } from "./lib/supabase.js";
+import {
+  computeDynamicDish,
+  ensureUserProfile,
+  fetchRecipeWithCache,
+  incrementSwipesUsed,
+  isSupabaseConfigured,
+  recordSwipe,
+  restaurantCacheKey,
+  saveCachedRestaurants,
+  signOutUser,
+  updateUserProfile,
+} from "./services/craveSupabase.js";
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -292,65 +306,186 @@ async function searchGooglePlacesNearby(lat, lng, term, tasteTags = []) {
     .map((place) => mapGooglePlace(place, lat, lng));
 }
 
-// Module-level session cache: dish id → photo URL (false = fetch attempted, no photo)
-const dishPhotoCache = Object.create(null);
-const dishPhotoInflight = new Set();
-const dishPhotoListeners = new Set();
+// ─── DISH CARD PHOTOS (Unsplash only — never Google Places) ─────────────────
+const DISH_PHOTO_QUERIES = {
+  1: "ramen bowl noodles soup",
+  2: "tacos mexican street food",
+  3: "smash burger beef patty juicy",
+  4: "sushi nigiri fish close up",
+  5: "pizza margherita melted cheese",
+  6: "bbq pork ribs smoked meat",
+  7: "crispy fried chicken",
+  8: "fresh lobster seafood plate",
+  9: "pad thai noodles wok",
+  10: "croissant flaky butter pastry",
+  11: "korean bbq galbi grill",
+  12: "ice cream gelato scoop",
+  13: "birria tacos consomme dip",
+  14: "pho bo vietnamese soup",
+  15: "xiaolongbao dim sum dumplings",
+  16: "acai bowl granola berries",
+  17: "chicken waffles maple syrup",
+  18: "butter chicken tikka masala",
+  19: "shawarma lamb wrap flatbread",
+  20: "spaghetti carbonara pasta",
+  21: "glazed donuts sprinkles",
+  22: "eggs benedict hollandaise brunch",
+  23: "greek salad feta olives",
+  24: "bubble tea tapioca boba",
+  25: "philly cheesesteak sandwich",
+  26: "buffalo chicken wings sauce",
+  27: "carne asada burrito stuffed",
+  28: "ribeye steak medium rare seared",
+  29: "club sandwich toasted",
+  30: "tiramisu chocolate dessert",
+};
 
-function notifyDishPhotoListeners() {
-  dishPhotoListeners.forEach((fn) => fn());
+const dishCardPhotoCache = Object.create(null);
+const dishCardPhotoInflight = Object.create(null);
+const dishCardPhotoListeners = new Set();
+const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY || "";
+
+function dishPhotoStorageKey(dishId) {
+  return `crave_dish_photo_${dishId}`;
 }
 
-function subscribeDishPhotos(listener) {
-  dishPhotoListeners.add(listener);
-  return () => dishPhotoListeners.delete(listener);
-}
-
-function getCachedDishPhoto(dishId) {
-  const cached = dishPhotoCache[dishId];
-  return typeof cached === "string" ? cached : "";
-}
-
-async function fetchDishPhotoFromPlaces(dishName) {
-  const data = await fetchPlacesApi("/place/textsearch/json", {
-    query: dishName.toLowerCase(),
-  });
-  const photoRef = data.results?.[0]?.photos?.[0]?.photo_reference;
-  return photoRef ? buildGooglePlacePhotoUrl(photoRef, 800) : null;
-}
-
-async function ensureDishPhoto(dish) {
-  if (!dish) return "";
-  if (dishPhotoCache[dish.id] !== undefined) {
-    return getCachedDishPhoto(dish.id);
-  }
-  if (dishPhotoInflight.has(dish.id)) return "";
-  if (!CONFIG.GOOGLE_PLACES_API_KEY) {
-    dishPhotoCache[dish.id] = false;
+function readDishPhotoFromStorage(dishId) {
+  try {
+    return localStorage.getItem(dishPhotoStorageKey(dishId)) || "";
+  } catch {
     return "";
   }
-
-  dishPhotoInflight.add(dish.id);
-  try {
-    const url = await fetchDishPhotoFromPlaces(dish.name);
-    dishPhotoCache[dish.id] = url || false;
-  } catch (err) {
-    console.warn(`Dish photo fetch failed (${dish.name}):`, err.message);
-    dishPhotoCache[dish.id] = false;
-  } finally {
-    dishPhotoInflight.delete(dish.id);
-    notifyDishPhotoListeners();
-  }
-  return getCachedDishPhoto(dish.id);
 }
 
-const dishPhotoDelay = (ms) => new Promise((r) => setTimeout(r, ms));
+function writeDishPhotoToStorage(dishId, url) {
+  try {
+    if (url) localStorage.setItem(dishPhotoStorageKey(dishId), url);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
 
-async function prefetchAllDishPhotos(dishes) {
-  for (const dish of dishes) {
-    if (dishPhotoCache[dish.id] !== undefined) continue;
-    await ensureDishPhoto(dish);
-    await dishPhotoDelay(200);
+function hydrateDishPhotosFromStorage() {
+  for (const id of Object.keys(DISH_PHOTO_QUERIES)) {
+    const dishId = Number(id);
+    const stored = readDishPhotoFromStorage(dishId);
+    if (stored) dishCardPhotoCache[dishId] = stored;
+  }
+}
+
+hydrateDishPhotosFromStorage();
+
+function notifyDishCardPhotoListeners() {
+  dishCardPhotoListeners.forEach((fn) => fn());
+}
+
+function subscribeDishCardPhotos(listener) {
+  dishCardPhotoListeners.add(listener);
+  return () => dishCardPhotoListeners.delete(listener);
+}
+
+function getCachedDishCardPhoto(dishId) {
+  if (typeof dishId !== "number") return "";
+  const cached = dishCardPhotoCache[dishId];
+  if (typeof cached === "string") return cached;
+
+  const stored = readDishPhotoFromStorage(dishId);
+  if (stored) {
+    dishCardPhotoCache[dishId] = stored;
+    return stored;
+  }
+  return "";
+}
+
+async function getDishCardPhoto(query, dishId) {
+  if (!query) return null;
+  if (!UNSPLASH_ACCESS_KEY) {
+    console.warn("Unsplash skipped: VITE_UNSPLASH_ACCESS_KEY is not set");
+    return null;
+  }
+
+  if (typeof dishId === "number") {
+    const stored = readDishPhotoFromStorage(dishId);
+    if (stored) {
+      dishCardPhotoCache[dishId] = stored;
+      return stored;
+    }
+    if (typeof dishCardPhotoCache[dishId] === "string") return dishCardPhotoCache[dishId];
+    if (dishCardPhotoCache[dishId] === false) return null;
+    if (dishCardPhotoInflight[dishId]) return dishCardPhotoInflight[dishId];
+  }
+
+  console.log("Fetching Unsplash photo for dish: " + dishId);
+
+  const fetchPromise = (async () => {
+    const url =
+      "https://api.unsplash.com/search/photos?query=" +
+      encodeURIComponent(query) +
+      "&per_page=3&orientation=portrait&content_filter=high&client_id=" +
+      UNSPLASH_ACCESS_KEY;
+
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Unsplash HTTP ${res.status}${body ? `: ${body.slice(0, 120)}` : ""}`);
+    }
+
+    const data = await res.json();
+    const photoUrl = data.results?.[0]?.urls?.regular || null;
+
+    if (typeof dishId === "number") {
+      if (photoUrl) {
+        writeDishPhotoToStorage(dishId, photoUrl);
+        dishCardPhotoCache[dishId] = photoUrl;
+      } else {
+        dishCardPhotoCache[dishId] = false;
+      }
+      delete dishCardPhotoInflight[dishId];
+      notifyDishCardPhotoListeners();
+    }
+
+    return photoUrl;
+  })();
+
+  if (typeof dishId === "number") {
+    dishCardPhotoInflight[dishId] = fetchPromise;
+  }
+
+  try {
+    return await fetchPromise;
+  } catch (err) {
+    if (typeof dishId === "number") {
+      dishCardPhotoCache[dishId] = false;
+      delete dishCardPhotoInflight[dishId];
+      notifyDishCardPhotoListeners();
+    }
+    throw err;
+  }
+}
+
+function scheduleDishPhotoFetch(dishId, query, staggerIndex) {
+  if (typeof dishId !== "number" || !query) return;
+  if (getCachedDishCardPhoto(dishId)) return;
+  if (dishCardPhotoCache[dishId] === false) return;
+  if (dishCardPhotoInflight[dishId]) return;
+
+  setTimeout(() => {
+    getDishCardPhoto(query, dishId).catch((err) => {
+      console.warn(`Unsplash fetch failed (dish ${dishId}):`, err.message);
+    });
+  }, staggerIndex * 200);
+}
+
+function prefetchDishPhotosForIndices(orderedDishes, startIdx, endIdx) {
+  if (!UNSPLASH_ACCESS_KEY) return;
+
+  let stagger = 0;
+  for (let i = startIdx; i <= endIdx && i < orderedDishes.length; i++) {
+    const dish = orderedDishes[i];
+    const query = DISH_PHOTO_QUERIES[dish.id];
+    if (!query) continue;
+    scheduleDishPhotoFetch(dish.id, query, stagger);
+    stagger += 1;
   }
 }
 
@@ -392,17 +527,36 @@ function applyRestaurantFilter(list, filter) {
 
 // ─── API CALLS ────────────────────────────────────────────────────────────────
 async function searchRestaurants(lat, lng, term, tasteTags = []) {
+  const cacheKey = restaurantCacheKey(term, lat, lng);
+  try {
+    const cached = await getCachedRestaurants(cacheKey);
+    if (cached?.length) return sortRestaurantsByRankScore(cached);
+  } catch (err) {
+    console.warn("Restaurant cache lookup failed:", err.message);
+  }
+
+  let results;
   if (!CONFIG.GOOGLE_PLACES_API_KEY) {
     console.warn("Missing Google Places API key, using mock data");
-    return sortRestaurantsByRankScore(await getMockList(term));
+    results = sortRestaurantsByRankScore(await getMockList(term));
+  } else {
+    try {
+      results = sortRestaurantsByRankScore(
+        await searchGooglePlacesNearby(lat, lng, term, tasteTags),
+      );
+    } catch (err) {
+      console.warn("Google Places Nearby Search failed, using mock data:", err);
+      results = sortRestaurantsByRankScore(await getMockList(term));
+    }
   }
+
   try {
-    const results = await searchGooglePlacesNearby(lat, lng, term, tasteTags);
-    return sortRestaurantsByRankScore(results);
+    await saveCachedRestaurants(cacheKey, results);
   } catch (err) {
-    console.warn("Google Places Nearby Search failed, using mock data:", err);
-    return sortRestaurantsByRankScore(await getMockList(term));
+    console.warn("Restaurant cache save failed:", err.message);
   }
+
+  return results;
 }
 
 async function fetchDetail(businessId, restaurant) {
@@ -949,25 +1103,24 @@ const CARD_TEXT_SHADOW = "0 2px 8px rgba(0,0,0,0.9)";
 
 // ─── CARD VISUALS ─────────────────────────────────────────────────────────────
 function DishCard({ dish, dim }) {
+  const [, setPhotoTick] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [imgErr, setImgErr] = useState(false);
-  const showImg = Boolean(dish.image) && !imgErr;
+  const photoUrl = getCachedDishCardPhoto(dish.id);
+  const showImg = Boolean(photoUrl) && !imgErr;
+
+  useEffect(() => subscribeDishCardPhotos(() => setPhotoTick((n) => n + 1)), []);
 
   useEffect(() => {
     setLoaded(false);
     setImgErr(false);
-  }, [dish.image]);
-
-  useEffect(() => {
-    if (dish.image || dishPhotoCache[dish.id] !== undefined) return;
-    ensureDishPhoto(dish);
-  }, [dish]);
+  }, [photoUrl]);
 
   return (
     <div style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", background:`radial-gradient(ellipse at 35% 25%, ${dish.g2} 0%, ${dish.g1} 65%)` }}>
       {showImg && (
         <img
-          src={dish.image} alt={dish.name} draggable={false}
+          src={photoUrl} alt={dish.name} draggable={false}
           onLoad={() => setLoaded(true)} onError={() => setImgErr(true)}
           style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity: loaded ? 1 : 0, transition:"opacity 0.4s", pointerEvents:"none", zIndex:1 }}
         />
@@ -1675,24 +1828,8 @@ function RecipeModal({ name, cuisine, emoji, g1, g3, onClose }) {
 
   const load = useCallback(() => {
     setLoading(true); setError(false); setRecipe(null);
-    fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        messages: [{
-          role: "user",
-          content: `You are a professional chef. Generate a home recipe for "${name}" (${cuisine} cuisine). Return ONLY valid JSON, no markdown: {"servings":2,"prepTime":"15 min","cookTime":"30 min","difficulty":"Medium","chefTip":"One sentence tip","ingredients":[{"amount":"2","unit":"cups","item":"ingredient"}],"steps":[{"title":"Step","instruction":"Instruction."}]} 8-10 ingredients, 5-6 steps.`,
-        }],
-      }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        const text = data.content?.find(b => b.type === "text")?.text || "";
-        setRecipe(JSON.parse(text.replace(/```json|```/g, "").trim()));
-        setLoading(false);
-      })
+    fetchRecipeWithCache(name, cuisine)
+      .then((data) => { setRecipe(data); setLoading(false); })
       .catch(() => { setError(true); setLoading(false); });
   }, [name, cuisine]);
 
@@ -1878,7 +2015,10 @@ function BottomNav({ tab, setTab, count }) {
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [screen,       setScreen]       = useState("splash");
+  const [screen,       setScreen]       = useState("loading");
+  const [authUser,     setAuthUser]     = useState(null);
+  const [userProfile,  setUserProfile]  = useState(null);
+  const [dynamicDish, setDynamicDish]  = useState(null);
   const [step,         setStep]         = useState(0);
   const [tasteTags,    setTasteTags]    = useState([]);
   const [userLoc,      setUserLoc]      = useState(null);
@@ -1905,15 +2045,91 @@ export default function App() {
   const [showWall,     setShowWall]     = useState(false);
   const [wallMode,     setWallMode]     = useState("limit");
   const [shareToast,   setShareToast]   = useState(false);
-  const [dishPhotoTick, setDishPhotoTick] = useState(0);
   const [showSwipeTutorial, setShowSwipeTutorial] = useState(false);
 
   const dsRef    = useRef({ x:0, y:0 });
-  const dishPrefetchRef = useRef(false);
   const velRef   = useRef(0);
   const lxRef    = useRef(0);
   const dyRawRef = useRef(0);
   const dxRawRef = useRef(0);
+  const userIdRef = useRef(null);
+
+  const applyUserProfile = useCallback((profile) => {
+    if (!profile) return;
+    setUserProfile(profile);
+    setTasteTags(profile.taste_tags || []);
+    setSwipesUsed(profile.swipes_used || 0);
+    setIsPremium(profile.is_premium || false);
+    setBonusSwipes(profile.bonus_swipes || 0);
+    userIdRef.current = profile.id;
+  }, []);
+
+  const bootstrapUser = useCallback(async (user) => {
+    if (!user) return;
+    setAuthUser(user);
+    userIdRef.current = user.id;
+    const profile = await ensureUserProfile(user);
+    applyUserProfile(profile);
+    const dish = await computeDynamicDish(user.id);
+    setDynamicDish(dish);
+    setScreen(profile.onboarding_completed ? "main" : "onboarding");
+  }, [applyUserProfile]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      setScreen("splash");
+      return;
+    }
+
+    let mounted = true;
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return;
+      if (session?.user) bootstrapUser(session.user);
+      else setScreen("auth");
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      if (session?.user) {
+        setAuthUser(session.user);
+        userIdRef.current = session.user.id;
+      } else {
+        setAuthUser(null);
+        setUserProfile(null);
+        userIdRef.current = null;
+        setScreen("auth");
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [bootstrapUser]);
+
+  const handleAuthSuccess = useCallback(async (user) => {
+    if (user) await bootstrapUser(user);
+  }, [bootstrapUser]);
+
+  const handleOnboardingComplete = useCallback(async () => {
+    const userId = userIdRef.current;
+    if (userId && isSupabaseConfigured) {
+      const profile = await updateUserProfile(userId, {
+        taste_tags: tasteTags,
+        onboarding_completed: true,
+      });
+      applyUserProfile(profile);
+    }
+    setScreen("main");
+  }, [tasteTags, applyUserProfile]);
+
+  const refreshLearningDish = useCallback(async () => {
+    const userId = userIdRef.current;
+    if (!userId) return;
+    const dish = await computeDynamicDish(userId);
+    setDynamicDish(dish);
+  }, []);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -1928,22 +2144,28 @@ export default function App() {
     );
   }, []);
 
-  const dishWithImage = useCallback(
-    (dish) => {
-      if (!dish) return dish;
-      const cached = getCachedDishPhoto(dish.id);
-      return { ...dish, image: cached || dish.image || "" };
-    },
-    [dishPhotoTick],
-  );
+  useEffect(() => {
+    console.log("Unsplash key loaded: " + import.meta.env.VITE_UNSPLASH_ACCESS_KEY);
+    notifyDishCardPhotoListeners();
+  }, []);
 
-  useEffect(() => subscribeDishPhotos(() => setDishPhotoTick((n) => n + 1)), []);
+  const orderedDishes = useMemo(() => {
+    const base = orderDishesByFlavorProfile(DISHES, tasteTags);
+    if (!dynamicDish) return base;
+    return [dynamicDish, ...base.filter((d) => d.id !== dynamicDish.id)];
+  }, [tasteTags, dynamicDish]);
 
   useEffect(() => {
-    if (dishPrefetchRef.current) return;
-    dishPrefetchRef.current = true;
-    prefetchAllDishPhotos(DISHES);
-  }, []);
+    if (layer !== "categories" || !orderedDishes.length) return;
+
+    const startIdx = catIdx;
+    const endIdx =
+      catIdx === 0
+        ? Math.min(4, orderedDishes.length - 1)
+        : Math.min(catIdx + 3, orderedDishes.length - 1);
+
+    prefetchDishPhotosForIndices(orderedDishes, startIdx, endIdx);
+  }, [catIdx, layer, orderedDishes]);
 
   useEffect(() => {
     if (screen !== "main" || tab !== "discover") return;
@@ -1954,11 +2176,6 @@ export default function App() {
   const restaurants = useMemo(
     () => applyRestaurantFilter(restaurantsRaw, restaurantFilter),
     [restaurantsRaw, restaurantFilter],
-  );
-
-  const orderedDishes = useMemo(
-    () => orderDishesByFlavorProfile(DISHES, tasteTags),
-    [tasteTags],
   );
 
   const totalAllowed = FREE_DAILY_SWIPES + bonusSwipes;
@@ -2026,7 +2243,10 @@ export default function App() {
 
     setExiting(true);
     setDx(dir === "right" ? 700 : -700);
-    if (!isPremium) setSwipesUsed(p => p + 1);
+    if (!isPremium) {
+      setSwipesUsed((p) => p + 1);
+      if (userIdRef.current) incrementSwipesUsed(userIdRef.current);
+    }
 
     if (layer === "categories") {
       const cat = orderedDishes[catIdx];
@@ -2042,6 +2262,14 @@ export default function App() {
       }
     } else {
       const rest = restaurants[restIdx];
+      if (rest && userIdRef.current) {
+        recordSwipe(
+          userIdRef.current,
+          rest,
+          dir === "right" ? "like" : "pass",
+        );
+        if (dir === "right") refreshLearningDish();
+      }
       if (dir === "right" && rest) {
         setLiked(p => [...p, { ...rest, category: activeCat }]);
         setBanner("like");
@@ -2065,7 +2293,7 @@ export default function App() {
       }
       setDx(0); setDy(0); setExiting(false);
     }, 420);
-  }, [exiting, isPremium, swipesUsed, totalAllowed, layer, catIdx, restIdx, restaurants, activeCat, loadRestaurants, orderedDishes]);
+  }, [exiting, isPremium, swipesUsed, totalAllowed, layer, catIdx, restIdx, restaurants, activeCat, loadRestaurants, orderedDishes, refreshLearningDish]);
 
   const onDown = (e) => {
     if (exiting) return;
@@ -2124,6 +2352,28 @@ export default function App() {
     return () => window.removeEventListener("keydown", h);
   }, [screen, tab, swipe]);
 
+  // ── Loading / Auth ─────────────────────────────────────────────────────────
+  if (screen === "loading") {
+    return (
+      <div style={{ background:"#0A0A0A", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <style>{CSS}</style>
+        <div style={{ color:"rgba(255,255,255,0.5)", fontSize:14, fontWeight:700 }}>
+          <span style={{ display:"inline-block", animation:"spin 1s linear infinite", marginRight:8 }}>⏳</span>
+          Loading crave...
+        </div>
+      </div>
+    );
+  }
+
+  if (screen === "auth") {
+    return (
+      <>
+        <style>{CSS}</style>
+        <AuthScreen onAuthenticated={handleAuthSuccess} />
+      </>
+    );
+  }
+
   // ── Splash screen ──────────────────────────────────────────────────────────
   if (screen === "splash") {
     return (
@@ -2145,7 +2395,7 @@ export default function App() {
           step={step} setStep={setStep}
           tasteTags={tasteTags} setTasteTags={setTasteTags}
           onLocationGranted={loc => setUserLoc(loc)}
-          onDone={() => setScreen("main")}
+          onDone={handleOnboardingComplete}
         />
       </div>
     );
@@ -2269,7 +2519,7 @@ export default function App() {
               {/* Ghost stack */}
               {!isDone && !fetching && [2, 1].map(o => {
                 if (layer === "categories") {
-                  const bg = dishWithImage(orderedDishes[catIdx + o]);
+                  const bg = orderedDishes[catIdx + o];
                   if (!bg) return null;
                   return (
                     <div key={bg.id} style={{ position:"absolute", inset:0, borderRadius:26, overflow:"hidden", transform:`scale(${1 - o * 0.035}) translateY(${o * 13}px)`, zIndex: 10 - o }}>
@@ -2315,7 +2565,7 @@ export default function App() {
                   onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}
                 >
                   {layer === "categories"
-                    ? <DishCard dish={dishWithImage(currentCard)} />
+                    ? <DishCard dish={currentCard} />
                     : <RestCard restaurant={currentCard} category={activeCat} />
                   }
 
@@ -2333,8 +2583,12 @@ export default function App() {
                   <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"20px 20px 22px", zIndex: showWall ? 1 : 5 }}>
                     {layer === "categories" ? (
                       <div>
-                        <div style={{ fontSize:26, fontWeight:900, color:"#fff", letterSpacing:"-0.5px", lineHeight:1.1, textShadow: CARD_TEXT_SHADOW }}>{currentCard.name}</div>
-                        <div style={{ color:"rgba(255,255,255,0.5)", fontSize:12, marginTop:4, fontWeight:600 }}>Swipe right to find restaurants near you</div>
+                        <div style={{ fontSize:26, fontWeight:900, color:"#fff", letterSpacing:"-0.5px", lineHeight:1.1, textShadow: CARD_TEXT_SHADOW }}>
+                          {currentCard.isDynamic ? currentCard.name : currentCard.name}
+                        </div>
+                        <div style={{ color: currentCard.isDynamic ? "#FF6060" : "rgba(255,255,255,0.5)", fontSize:12, marginTop:4, fontWeight:600, textShadow: CARD_TEXT_SHADOW }}>
+                          {currentCard.isDynamic ? "Personalized from your likes" : "Swipe right to find restaurants near you"}
+                        </div>
                         <div style={{ display:"flex", gap:5, marginTop:10, flexWrap:"wrap" }}>
                           {currentCard.tags.map(t => <span key={t} className="chip">{t}</span>)}
                         </div>
@@ -2477,8 +2731,18 @@ export default function App() {
                 {isPremium ? "👑" : "👤"}
               </div>
               <div style={{ color:"#fff", fontWeight:800, fontSize:18 }}>{isPremium ? "Premium Member" : "Food Explorer"}</div>
-              <div style={{ color:"rgba(255,255,255,0.35)", fontSize:12, marginTop:3 }}>{isPremium ? "Unlimited · AI Recipes · 1-tap ordering" : "Free plan"}</div>
+              <div style={{ color:"rgba(255,255,255,0.35)", fontSize:12, marginTop:3 }}>{authUser?.email || userProfile?.email || (isPremium ? "Unlimited · AI Recipes · 1-tap ordering" : "Free plan")}</div>
             </div>
+
+            {isSupabaseConfigured && authUser && (
+              <button
+                onClick={async () => { await signOutUser(); setLiked([]); setDynamicDish(null); }}
+                className="ghostbtn"
+                style={{ marginBottom:14 }}
+              >
+                Sign Out
+              </button>
+            )}
 
             {!isPremium && (
               <div style={{ background:"rgba(255,255,255,0.05)", borderRadius:14, padding:16, marginBottom:14, border:"1px solid rgba(255,255,255,0.07)" }}>
