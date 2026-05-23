@@ -1,5 +1,11 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": "vite"
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/maps/api/:path*",
+      "destination": "https://maps.googleapis.com/maps/api/:path*"
+    }
+  ]
 }

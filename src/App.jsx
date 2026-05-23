@@ -2,10 +2,24 @@ import { useState, useRef, useEffect, useCallback } from "react";
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
-  SUPABASE_YELP_PROXY_URL: "",
+  GOOGLE_PLACES_API_KEY:
+    import.meta.env.VITE_GOOGLE_PLACES_API_KEY ||
+    "AIzaSyDrJ-X7_ouEhdgm28iqWZaAFHqQIRw6cUQ",
   SEARCH_RADIUS: 3200,
   RESULTS_LIMIT: 20,
 };
+
+const PLACES_API_BASE = "/maps/api";
+const PLACE_TYPE_SKIP = new Set([
+  "establishment",
+  "point_of_interest",
+  "food",
+  "restaurant",
+  "meal_takeaway",
+  "meal_delivery",
+  "store",
+  "political",
+]);
 
 const FREE_DAILY_SWIPES  = 15;
 const BONUS_SHARE_SWIPES = 10;
@@ -51,31 +65,108 @@ const TASTE_TAGS = [
   "Comfort 🍲","Premium ✨","Quick 🏃","Vegan 🌱","Seafood 🦞","Noodles 🍜",
 ];
 
+// ─── GOOGLE PLACES ────────────────────────────────────────────────────────────
+function placesApiUrl(path, params) {
+  const url = new URL(`${PLACES_API_BASE}${path}`, window.location.origin);
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null && value !== "") url.searchParams.set(key, String(value));
+  }
+  url.searchParams.set("key", CONFIG.GOOGLE_PLACES_API_KEY);
+  return url.toString();
+}
+
+function placePhotoUrl(photoReference, maxWidth = 800) {
+  if (!photoReference) return null;
+  return placesApiUrl("/place/photo", {
+    maxwidth: maxWidth,
+    photo_reference: photoReference,
+  });
+}
+
+function cuisineFromTypes(types = []) {
+  const match = types.find((t) => !PLACE_TYPE_SKIP.has(t));
+  if (!match) return "Restaurant";
+  return match
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function priceFromLevel(level) {
+  if (level == null || level === 0) return "$$";
+  return "$".repeat(Math.min(4, Math.max(1, level)));
+}
+
+function distanceMiles(lat1, lng1, lat2, lng2) {
+  const R = 3958.8;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))).toFixed(1);
+}
+
+function mapGooglePlace(place, userLat, userLng) {
+  const lat = place.geometry?.location?.lat;
+  const lng = place.geometry?.location?.lng;
+  return {
+    id: place.place_id,
+    name: place.name,
+    cuisine: cuisineFromTypes(place.types),
+    rating: place.rating != null ? String(place.rating) : "—",
+    price: priceFromLevel(place.price_level),
+    distanceMiles:
+      lat != null && lng != null
+        ? distanceMiles(userLat, userLng, lat, lng)
+        : "—",
+    address: place.vicinity || place.formatted_address || "",
+    phone: "",
+    reviewCount: place.user_ratings_total || 0,
+    primaryPhoto: place.photos?.[0]
+      ? placePhotoUrl(place.photos[0].photo_reference)
+      : null,
+    lat: lat ?? userLat,
+    lng: lng ?? userLng,
+    isOpenNow: place.opening_hours?.open_now ?? true,
+    deliversYelp: false,
+    doesPickup: true,
+    website: null,
+    orderUrl: null,
+    isPartner: false,
+  };
+}
+
+async function searchGooglePlaces(lat, lng, term) {
+  const url = placesApiUrl("/place/textsearch/json", {
+    query: `${term} restaurant`,
+    location: `${lat},${lng}`,
+    radius: CONFIG.SEARCH_RADIUS,
+  });
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Places HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+    throw new Error(data.error_message || data.status || "Places search failed");
+  }
+  return (data.results || [])
+    .slice(0, CONFIG.RESULTS_LIMIT)
+    .map((place) => mapGooglePlace(place, lat, lng));
+}
+
 // ─── API CALLS ────────────────────────────────────────────────────────────────
 async function searchRestaurants(lat, lng, term) {
-  if (!CONFIG.SUPABASE_YELP_PROXY_URL) {
+  try {
+    return await searchGooglePlaces(lat, lng, term);
+  } catch (err) {
+    console.warn("Google Places failed, using mock data:", err);
     return getMockList(term);
   }
-  const res = await fetch(CONFIG.SUPABASE_YELP_PROXY_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ lat, lng, term, radius_meters: CONFIG.SEARCH_RADIUS, limit: CONFIG.RESULTS_LIMIT }),
-  });
-  if (!res.ok) throw new Error("Search failed");
-  return (await res.json()).restaurants || [];
 }
 
 async function fetchDetail(businessId, restaurant) {
-  if (!CONFIG.SUPABASE_YELP_PROXY_URL) {
-    return getMockDetail(businessId, restaurant);
-  }
-  const res = await fetch(CONFIG.SUPABASE_YELP_PROXY_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ business_id: businessId }),
-  });
-  if (!res.ok) throw new Error("Detail failed");
-  return (await res.json()).detail;
+  return getMockDetail(businessId, restaurant);
 }
 
 // ─── MOCK DATA ────────────────────────────────────────────────────────────────
@@ -1222,6 +1313,19 @@ export default function App() {
   const dsRef  = useRef({ x:0, y:0 });
   const velRef = useRef(0);
   const lxRef  = useRef(0);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        setUserLoc({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        }),
+      () => {},
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
+    );
+  }, []);
 
   const totalAllowed = FREE_DAILY_SWIPES + bonusSwipes;
   const swipesLeft   = Math.max(0, totalAllowed - swipesUsed);
