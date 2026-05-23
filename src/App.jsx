@@ -1727,7 +1727,7 @@ export default function App() {
   const [showWall,     setShowWall]     = useState(false);
   const [wallMode,     setWallMode]     = useState("limit");
   const [shareToast,   setShareToast]   = useState(false);
-  const [, setDishPhotoTick] = useState(0);
+  const [dishPhotoTick, setDishPhotoTick] = useState(0);
   const [showSwipeTutorial, setShowSwipeTutorial] = useState(false);
 
   const dsRef    = useRef({ x:0, y:0 });
